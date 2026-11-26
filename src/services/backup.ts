@@ -10,6 +10,7 @@ import {
   closeDatabase,
   DB_NAME,
   getDatabase,
+  getDatabaseFilePath,
   getFiscalSummaryByYear,
   getTransactionsByYear,
 } from '@/db/database';
@@ -27,6 +28,11 @@ function getSqliteDir(): Directory {
 }
 
 function getSqliteFile(): File {
+  const nativePath = getDatabaseFilePath();
+  if (nativePath && (nativePath.startsWith('file://') || nativePath.startsWith('/'))) {
+    const uri = nativePath.startsWith('file://') ? nativePath : `file://${nativePath}`;
+    return new File(uri);
+  }
   return new File(getSqliteDir(), DB_NAME);
 }
 
@@ -136,11 +142,11 @@ export function resolveAttachmentUri(fileNameOrUri: string | null): string | nul
 
 export async function exportBackupZip(): Promise<void> {
   await getDatabase();
+  const dbFile = getSqliteFile();
   await closeDatabase();
 
   let zipBytes: Uint8Array;
   try {
-    const dbFile = getSqliteFile();
     if (!dbFile.exists) {
       throw new Error('No se encontró la base de datos local.');
     }
@@ -237,19 +243,19 @@ export async function importBackupZip(): Promise<{ importedAttachments: number }
     stagedAttachments.push({ fileName, data });
   }
 
+  const targetDb = getSqliteFile();
   await closeDatabase();
 
-  const sqliteDir = getSqliteDir();
+  const sqliteDir = targetDb.parentDirectory;
   if (!sqliteDir.exists) {
     sqliteDir.create({ intermediates: true, idempotent: true });
   }
 
-  const targetDb = getSqliteFile();
   const previousDbBytes = targetDb.exists ? await targetDb.bytes() : null;
 
   try {
     for (const suffix of ['-wal', '-shm']) {
-      const journalFile = new File(sqliteDir, `${DB_NAME}${suffix}`);
+      const journalFile = new File(targetDb.parentDirectory, `${targetDb.name}${suffix}`);
       if (journalFile.exists) {
         journalFile.delete();
       }
@@ -285,12 +291,18 @@ export async function importBackupZip(): Promise<{ importedAttachments: number }
 export async function resetLocalDatabase(): Promise<void> {
   await closeDatabase();
 
+  try {
+    await SQLite.deleteDatabaseAsync(DB_NAME);
+  } catch {
+    // Ignore if database did not exist in Expo SQLite default directory.
+  }
+
   const sqliteDir = getSqliteDir();
   if (sqliteDir.exists) {
     for (const suffix of ['', '-wal', '-shm']) {
-      const target = new File(sqliteDir, `${DB_NAME}${suffix}`);
-      if (target.exists) {
-        target.delete();
+      const file = new File(sqliteDir, `${DB_NAME}${suffix}`);
+      if (file.exists) {
+        file.delete();
       }
     }
   }

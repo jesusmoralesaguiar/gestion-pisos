@@ -33,6 +33,11 @@ export type AppDatabase = ExpoSQLiteDatabase<typeof schema>;
 let expoDb: SQLite.SQLiteDatabase | null = null;
 let drizzleDb: AppDatabase | null = null;
 let initPromise: Promise<AppDatabase> | null = null;
+let lastDatabasePath: string | null = null;
+
+export function getDatabaseFilePath(): string | null {
+  return lastDatabasePath;
+}
 
 /**
  * Returns the initialized Drizzle ORM database instance, running any pending
@@ -48,6 +53,7 @@ export async function getDatabase(): Promise<AppDatabase> {
 
   initPromise = (async () => {
     const db = SQLite.openDatabaseSync(DB_NAME, { enableChangeListener: true });
+    lastDatabasePath = db.databasePath;
     try {
       db.execSync('PRAGMA foreign_keys = ON;');
       const orm = drizzle(db, { schema });
@@ -78,6 +84,7 @@ export async function closeDatabase(): Promise<void> {
   expoDb = null;
   drizzleDb = null;
   initPromise = null;
+  lastDatabasePath = null;
 }
 
 // --- Properties ---

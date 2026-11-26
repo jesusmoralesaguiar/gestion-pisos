@@ -1,14 +1,3 @@
-CREATE TABLE IF NOT EXISTS `incidents` (
-	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-	`property_id` integer NOT NULL,
-	`title` text NOT NULL,
-	`description` text DEFAULT '' NOT NULL,
-	`status` text DEFAULT 'abierta' NOT NULL,
-	`photo_uri` text,
-	`created_at` text DEFAULT (datetime('now')) NOT NULL,
-	FOREIGN KEY (`property_id`) REFERENCES `properties`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `properties` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,
@@ -21,7 +10,18 @@ CREATE TABLE IF NOT EXISTS `properties` (
 	`payment_day` integer DEFAULT 5 NOT NULL,
 	`tenant_name` text DEFAULT '' NOT NULL,
 	`notes` text DEFAULT '' NOT NULL,
-	`created_at` text DEFAULT (datetime('now')) NOT NULL
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `incidents` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`property_id` integer NOT NULL,
+	`title` text NOT NULL,
+	`description` text DEFAULT '' NOT NULL,
+	`status` text DEFAULT 'abierta' NOT NULL,
+	`photo_uri` text,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	FOREIGN KEY (`property_id`) REFERENCES `properties`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `reminders` (
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `reminders` (
 	`category` text DEFAULT 'otro' NOT NULL,
 	`due_date` text NOT NULL,
 	`completed` integer DEFAULT 0 NOT NULL,
-	`created_at` text DEFAULT (datetime('now')) NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	FOREIGN KEY (`property_id`) REFERENCES `properties`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS `transactions` (
 	`status` text DEFAULT 'completado' NOT NULL,
 	`description` text DEFAULT '' NOT NULL,
 	`attachment_uri` text,
-	`created_at` text DEFAULT (datetime('now')) NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	FOREIGN KEY (`property_id`) REFERENCES `properties`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint

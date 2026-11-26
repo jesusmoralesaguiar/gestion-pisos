@@ -46,7 +46,7 @@ export const properties = sqliteTable('properties', {
   notes: text('notes').notNull().default(''),
   created_at: text('created_at')
     .notNull()
-    .default(sql`(datetime('now'))`),
+    .default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const transactions = sqliteTable(
@@ -67,7 +67,7 @@ export const transactions = sqliteTable(
     attachment_uri: text('attachment_uri'),
     created_at: text('created_at')
       .notNull()
-      .default(sql`(datetime('now'))`),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index('idx_transactions_property_date').on(table.property_id, table.date)]
 );
@@ -83,7 +83,7 @@ export const incidents = sqliteTable('incidents', {
   photo_uri: text('photo_uri'),
   created_at: text('created_at')
     .notNull()
-    .default(sql`(datetime('now'))`),
+    .default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const reminders = sqliteTable(
@@ -97,7 +97,7 @@ export const reminders = sqliteTable(
     completed: integer('completed').notNull().default(0),
     created_at: text('created_at')
       .notNull()
-      .default(sql`(datetime('now'))`),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index('idx_reminders_due_date').on(table.due_date, table.completed)]
 );

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "f7a6f7e9-1561-42cd-ad2c-3dac12e97e8f",
+  "id": "f573aa67-f6dd-4f93-8f35-2de86b5eada3",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "incidents": {
@@ -57,7 +57,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "(datetime('now'))"
+          "default": "CURRENT_TIMESTAMP"
         }
       },
       "indexes": {},
@@ -175,7 +175,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "(datetime('now'))"
+          "default": "CURRENT_TIMESTAMP"
         }
       },
       "indexes": {},
@@ -237,7 +237,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "(datetime('now'))"
+          "default": "CURRENT_TIMESTAMP"
         }
       },
       "indexes": {
@@ -359,7 +359,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "(datetime('now'))"
+          "default": "CURRENT_TIMESTAMP"
         }
       },
       "indexes": {
