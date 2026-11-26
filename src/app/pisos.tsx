@@ -1,6 +1,6 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { type ComponentRef, useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Keyboard, ScrollView, StyleSheet, View } from 'react-native';
 import {
   Button,
   Card,
@@ -56,6 +56,26 @@ export default function PisosScreen() {
   const [reminderProperty, setReminderProperty] = useState<Property | null>(null);
   const [reminderTitle, setReminderTitle] = useState('');
   const [reminderDate, setReminderDate] = useState(() => getLocalISODate());
+
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const propertyDialogScrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const dialogOffsetsRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const scrollDialogToField = (key: string) => {
+    const y = Math.max(0, (dialogOffsetsRef.current[key] ?? 0) - 48);
+    setTimeout(() => {
+      propertyDialogScrollRef.current?.scrollTo({ y, animated: true });
+    }, 120);
+  };
 
   const loadData = useCallback(async () => {
     const [props, inc] = await Promise.all([getAllProperties(), getOpenIncidents()]);
@@ -260,10 +280,16 @@ export default function PisosScreen() {
 
       {/* Dialog: Nuevo piso */}
       <Portal>
-        <Dialog visible={showAddProperty} onDismiss={() => setShowAddProperty(false)}>
+        <Dialog
+          visible={showAddProperty}
+          onDismiss={() => setShowAddProperty(false)}
+          style={keyboardVisible ? styles.dialogRaised : undefined}>
           <Dialog.Title>Nuevo inmueble</Dialog.Title>
-          <Dialog.ScrollArea style={{ maxHeight: 420 }}>
-            <ScrollView contentContainerStyle={{ gap: 10, paddingVertical: 8 }}>
+          <Dialog.ScrollArea style={{ maxHeight: keyboardVisible ? 300 : 420 }}>
+            <ScrollView
+              ref={propertyDialogScrollRef}
+              contentContainerStyle={{ gap: 10, paddingVertical: 8, paddingBottom: 80 }}
+              keyboardShouldPersistTaps="handled">
               <TextInput
                 label="Nombre corto (ej. Piso Centro)*"
                 value={name}
@@ -296,41 +322,71 @@ export default function PisosScreen() {
                   ]}
                 />
               )}
-              <TextInput
-                label="Dirección"
-                value={address}
-                onChangeText={setAddress}
-                mode="outlined"
-              />
-              <TextInput
-                label="Referencia Catastral (para Hacienda)"
-                value={cadastralRef}
-                onChangeText={setCadastralRef}
-                autoCapitalize="characters"
-                mode="outlined"
-              />
-              <TextInput
-                label="Renta mensual habitual (€)"
-                value={monthlyRent}
-                onChangeText={setMonthlyRent}
-                keyboardType="decimal-pad"
-                mode="outlined"
-              />
+              <View
+                onLayout={(e) => {
+                  dialogOffsetsRef.current.address = e.nativeEvent.layout.y;
+                }}>
+                <TextInput
+                  label="Dirección"
+                  value={address}
+                  onChangeText={setAddress}
+                  onFocus={() => scrollDialogToField('address')}
+                  mode="outlined"
+                />
+              </View>
+              <View
+                onLayout={(e) => {
+                  dialogOffsetsRef.current.cadastralRef = e.nativeEvent.layout.y;
+                }}>
+                <TextInput
+                  label="Referencia Catastral (para Hacienda)"
+                  value={cadastralRef}
+                  onChangeText={setCadastralRef}
+                  onFocus={() => scrollDialogToField('cadastralRef')}
+                  autoCapitalize="characters"
+                  mode="outlined"
+                />
+              </View>
+              <View
+                onLayout={(e) => {
+                  dialogOffsetsRef.current.monthlyRent = e.nativeEvent.layout.y;
+                }}>
+                <TextInput
+                  label="Renta mensual habitual (€)"
+                  value={monthlyRent}
+                  onChangeText={setMonthlyRent}
+                  onFocus={() => scrollDialogToField('monthlyRent')}
+                  keyboardType="decimal-pad"
+                  mode="outlined"
+                />
+              </View>
               {regime === 'residencial' && (
                 <>
-                  <TextInput
-                    label="Día habitual de cobro (1-28)"
-                    value={paymentDay}
-                    onChangeText={setPaymentDay}
-                    keyboardType="number-pad"
-                    mode="outlined"
-                  />
-                  <TextInput
-                    label="Nombre del inquilino"
-                    value={tenantName}
-                    onChangeText={setTenantName}
-                    mode="outlined"
-                  />
+                  <View
+                    onLayout={(e) => {
+                      dialogOffsetsRef.current.paymentDay = e.nativeEvent.layout.y;
+                    }}>
+                    <TextInput
+                      label="Día habitual de cobro (1-28)"
+                      value={paymentDay}
+                      onChangeText={setPaymentDay}
+                      onFocus={() => scrollDialogToField('paymentDay')}
+                      keyboardType="number-pad"
+                      mode="outlined"
+                    />
+                  </View>
+                  <View
+                    onLayout={(e) => {
+                      dialogOffsetsRef.current.tenantName = e.nativeEvent.layout.y;
+                    }}>
+                    <TextInput
+                      label="Nombre del inquilino"
+                      value={tenantName}
+                      onChangeText={setTenantName}
+                      onFocus={() => scrollDialogToField('tenantName')}
+                      mode="outlined"
+                    />
+                  </View>
                 </>
               )}
             </ScrollView>
@@ -344,7 +400,10 @@ export default function PisosScreen() {
         </Dialog>
 
         {/* Dialog: Nueva incidencia */}
-        <Dialog visible={!!incidentProperty} onDismiss={() => setIncidentProperty(null)}>
+        <Dialog
+          visible={!!incidentProperty}
+          onDismiss={() => setIncidentProperty(null)}
+          style={keyboardVisible ? styles.dialogRaised : undefined}>
           <Dialog.Title>Incidencia en {incidentProperty?.name}</Dialog.Title>
           <Dialog.Content style={{ gap: 10 }}>
             <TextInput
@@ -370,7 +429,10 @@ export default function PisosScreen() {
         </Dialog>
 
         {/* Dialog: Nuevo aviso */}
-        <Dialog visible={!!reminderProperty} onDismiss={() => setReminderProperty(null)}>
+        <Dialog
+          visible={!!reminderProperty}
+          onDismiss={() => setReminderProperty(null)}
+          style={keyboardVisible ? styles.dialogRaised : undefined}>
           <Dialog.Title>Aviso para {reminderProperty?.name}</Dialog.Title>
           <Dialog.Content style={{ gap: 10 }}>
             <TextInput
@@ -405,4 +467,5 @@ const styles = StyleSheet.create({
   chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   incidentsBox: { marginTop: 6 },
   fab: { position: 'absolute', right: 16, bottom: 16 },
+  dialogRaised: { marginBottom: 140 },
 });

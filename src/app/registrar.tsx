@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { type ComponentRef, useCallback, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import {
   Button,
@@ -27,6 +27,7 @@ import {
   saveAttachmentLocally,
 } from '@/services/backup';
 import { getLocalISODate, isValidISODate } from '@/utils/dates';
+import { formatEUR } from '@/utils/format';
 
 export default function RegistrarScreen() {
   const theme = useTheme();
@@ -43,6 +44,17 @@ export default function RegistrarScreen() {
   const [attachmentName, setAttachmentName] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [snackbarMsg, setSnackbarMsg] = useState('');
+
+  const scrollViewRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const detailsCardYRef = useRef<number>(0);
+  const inputOffsetsRef = useRef<Record<string, number>>({});
+
+  const scrollToField = (key: string) => {
+    const y = Math.max(0, detailsCardYRef.current + (inputOffsetsRef.current[key] ?? 0) - 96);
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y, animated: true });
+    }, 120);
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -142,20 +154,41 @@ export default function RegistrarScreen() {
 
   const categories = type === 'ingreso' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId);
+  const isCanarias = !selectedProperty || selectedProperty.tax_region === 'canarias';
+  const isExemptIncome =
+    type === 'ingreso' &&
+    !!selectedProperty &&
+    (selectedProperty.regime === 'residencial' || selectedProperty.igic_regime === 'repep');
 
   const taxInputLabel = (() => {
-    if (!selectedProperty || selectedProperty.tax_region === 'canarias') {
-      if (
-        type === 'ingreso' &&
-        selectedProperty &&
-        (selectedProperty.regime === 'residencial' || selectedProperty.igic_regime === 'repep')
-      ) {
-        return 'IGIC (0 € exento)';
-      }
-      return 'IGIC incluido (€)';
+    if (isCanarias) {
+      return isExemptIncome ? 'IGIC (0 € exento)' : 'IGIC incluido (€)';
     }
     return 'IVA incluido (€)';
   })();
+
+  const taxRates = isCanarias ? [7, 3, 0] : [21, 10, 0];
+
+  const handleApplyTaxRate = (ratePct: number) => {
+    if (ratePct === 0) {
+      setVatAmount('0');
+      return;
+    }
+    const numAmount = Number(amount.replace(',', '.'));
+    if (!numAmount || numAmount <= 0) {
+      Alert.alert(
+        'Importe requerido',
+        'Introduce primero el importe total para calcular el impuesto incluido.'
+      );
+      return;
+    }
+    const includedTax = numAmount - numAmount / (1 + ratePct / 100);
+    setVatAmount((Math.round(includedTax * 100) / 100).toFixed(2));
+  };
+
+  const parsedAmount = Number(amount.replace(',', '.')) || 0;
+  const parsedVat = Number(vatAmount.replace(',', '.')) || 0;
+  const computedBase = Math.max(0, parsedAmount - parsedVat);
 
   if (properties.length === 0) {
     return (
@@ -173,8 +206,12 @@ export default function RegistrarScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: theme.colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 80}>
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled">
         <SegmentedButtons
           value={type}
           onValueChange={handleTypeChange}
@@ -218,14 +255,24 @@ export default function RegistrarScreen() {
           </Card.Content>
         </Card>
 
-        <Card mode="outlined" style={styles.card}>
+        <Card
+          mode="outlined"
+          style={styles.card}
+          onLayout={(e) => {
+            detailsCardYRef.current = e.nativeEvent.layout.y;
+          }}>
           <Card.Content style={{ gap: 12 }}>
             <Text variant="labelLarge">3. Importe y detalles</Text>
-            <View style={styles.row}>
+            <View
+              style={styles.row}
+              onLayout={(e) => {
+                inputOffsetsRef.current.amountRow = e.nativeEvent.layout.y;
+              }}>
               <TextInput
                 label="Importe total (€)*"
                 value={amount}
                 onChangeText={setAmount}
+                onFocus={() => scrollToField('amountRow')}
                 keyboardType="decimal-pad"
                 mode="outlined"
                 style={{ flex: 2 }}
@@ -234,23 +281,59 @@ export default function RegistrarScreen() {
                 label={taxInputLabel}
                 value={vatAmount}
                 onChangeText={setVatAmount}
+                onFocus={() => scrollToField('amountRow')}
                 keyboardType="decimal-pad"
                 mode="outlined"
                 style={{ flex: 1 }}
               />
             </View>
-            <TextInput
-              label="Fecha (AAAA-MM-DD)"
-              value={date}
-              onChangeText={setDate}
-              mode="outlined"
-            />
-            <TextInput
-              label="Concepto / Proveedor (opcional)"
-              value={description}
-              onChangeText={setDescription}
-              mode="outlined"
-            />
+            {!isExemptIncome && (
+              <View style={{ gap: 6 }}>
+                <View style={styles.chipsWrap}>
+                  {taxRates.map((rate) => (
+                    <Chip
+                      key={rate}
+                      compact
+                      icon={rate === 0 ? 'close-circle-outline' : 'percent'}
+                      onPress={() => handleApplyTaxRate(rate)}>
+                      {rate === 0
+                        ? '0 % Exento'
+                        : `${rate} % ${isCanarias ? 'IGIC' : 'IVA'}`}
+                    </Chip>
+                  ))}
+                </View>
+                {parsedAmount > 0 && (
+                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                    Base imponible: {formatEUR(computedBase)} · {isCanarias ? 'IGIC' : 'IVA'}:{' '}
+                    {formatEUR(parsedVat)}
+                  </Text>
+                )}
+              </View>
+            )}
+            <View
+              onLayout={(e) => {
+                inputOffsetsRef.current.date = e.nativeEvent.layout.y;
+              }}>
+              <TextInput
+                label="Fecha (AAAA-MM-DD)"
+                value={date}
+                onChangeText={setDate}
+                onFocus={() => scrollToField('date')}
+                mode="outlined"
+              />
+            </View>
+            <View
+              onLayout={(e) => {
+                inputOffsetsRef.current.description = e.nativeEvent.layout.y;
+              }}>
+              <TextInput
+                label="Concepto / Proveedor (opcional)"
+                value={description}
+                onChangeText={setDescription}
+                onFocus={() => scrollToField('description')}
+                mode="outlined"
+              />
+            </View>
           </Card.Content>
         </Card>
 
@@ -311,7 +394,7 @@ export default function RegistrarScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 16 },
-  content: { padding: 16, gap: 14, paddingBottom: 32 },
+  content: { padding: 16, gap: 14, paddingBottom: 140 },
   card: { borderRadius: 16 },
   chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   row: { flexDirection: 'row', gap: 10 },
