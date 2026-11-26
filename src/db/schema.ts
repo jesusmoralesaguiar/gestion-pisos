@@ -1,69 +1,11 @@
+import { sql } from 'drizzle-orm';
+import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+
 export type PropertyRegime = 'residencial' | 'vacacional';
 export type TransactionType = 'ingreso' | 'gasto';
 export type TransactionStatus = 'completado' | 'pendiente';
 export type IncidentStatus = 'abierta' | 'en_curso' | 'resuelta';
 export type ReminderCategory = 'cobro' | 'seguro' | 'ibi' | 'contrato' | 'otro';
-
-export interface Property {
-  id: number;
-  name: string;
-  address: string;
-  cadastral_ref: string;
-  regime: PropertyRegime;
-  monthly_rent: number;
-  payment_day: number;
-  tenant_name: string;
-  notes: string;
-  created_at: string;
-}
-
-export interface Transaction {
-  id: number;
-  property_id: number;
-  property_name?: string;
-  type: TransactionType;
-  category: string;
-  amount: number;
-  base_amount: number;
-  vat_amount: number;
-  date: string; // YYYY-MM-DD
-  status: TransactionStatus;
-  description: string;
-  attachment_uri: string | null;
-  created_at: string;
-}
-
-export interface Incident {
-  id: number;
-  property_id: number;
-  property_name?: string;
-  title: string;
-  description: string;
-  status: IncidentStatus;
-  photo_uri: string | null;
-  created_at: string;
-}
-
-export interface Reminder {
-  id: number;
-  property_id: number | null;
-  property_name?: string;
-  title: string;
-  category: ReminderCategory;
-  due_date: string; // YYYY-MM-DD
-  completed: number; // 0 | 1
-  created_at: string;
-}
-
-export interface PropertyFiscalSummary {
-  property_id: number;
-  property_name: string;
-  cadastral_ref: string;
-  regime: PropertyRegime;
-  total_income: number;
-  total_expense: number;
-  net_yield: number;
-}
 
 export const INCOME_CATEGORIES = [
   'Alquiler mensual',
@@ -84,62 +26,85 @@ export const EXPENSE_CATEGORIES = [
   'Gestoría / Otros',
 ] as const;
 
-export const CURRENT_DB_VERSION = 1;
+export const properties = sqliteTable('properties', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  address: text('address').notNull().default(''),
+  cadastral_ref: text('cadastral_ref').notNull().default(''),
+  regime: text('regime').$type<PropertyRegime>().notNull().default('residencial'),
+  monthly_rent: real('monthly_rent').notNull().default(0),
+  payment_day: integer('payment_day').notNull().default(5),
+  tenant_name: text('tenant_name').notNull().default(''),
+  notes: text('notes').notNull().default(''),
+  created_at: text('created_at')
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
 
-export const MIGRATION_V1_SQL = `
-  PRAGMA foreign_keys = ON;
+export const transactions = sqliteTable(
+  'transactions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    property_id: integer('property_id')
+      .notNull()
+      .references(() => properties.id, { onDelete: 'cascade' }),
+    type: text('type').$type<TransactionType>().notNull(),
+    category: text('category').notNull(),
+    amount: real('amount').notNull(),
+    base_amount: real('base_amount').notNull().default(0),
+    vat_amount: real('vat_amount').notNull().default(0),
+    date: text('date').notNull(),
+    status: text('status').$type<TransactionStatus>().notNull().default('completado'),
+    description: text('description').notNull().default(''),
+    attachment_uri: text('attachment_uri'),
+    created_at: text('created_at')
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [index('idx_transactions_property_date').on(table.property_id, table.date)]
+);
 
-  CREATE TABLE IF NOT EXISTS properties (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    address TEXT NOT NULL DEFAULT '',
-    cadastral_ref TEXT NOT NULL DEFAULT '',
-    regime TEXT NOT NULL CHECK (regime IN ('residencial', 'vacacional')) DEFAULT 'residencial',
-    monthly_rent REAL NOT NULL DEFAULT 0,
-    payment_day INTEGER NOT NULL DEFAULT 5,
-    tenant_name TEXT NOT NULL DEFAULT '',
-    notes TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+export const incidents = sqliteTable('incidents', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  property_id: integer('property_id')
+    .notNull()
+    .references(() => properties.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  status: text('status').$type<IncidentStatus>().notNull().default('abierta'),
+  photo_uri: text('photo_uri'),
+  created_at: text('created_at')
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
 
-  CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    property_id INTEGER NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('ingreso', 'gasto')),
-    category TEXT NOT NULL,
-    amount REAL NOT NULL,
-    base_amount REAL NOT NULL DEFAULT 0,
-    vat_amount REAL NOT NULL DEFAULT 0,
-    date TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('completado', 'pendiente')) DEFAULT 'completado',
-    description TEXT NOT NULL DEFAULT '',
-    attachment_uri TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
-  );
+export const reminders = sqliteTable(
+  'reminders',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    property_id: integer('property_id').references(() => properties.id, { onDelete: 'set null' }),
+    title: text('title').notNull(),
+    category: text('category').$type<ReminderCategory>().notNull().default('otro'),
+    due_date: text('due_date').notNull(),
+    completed: integer('completed').notNull().default(0),
+    created_at: text('created_at')
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [index('idx_reminders_due_date').on(table.due_date, table.completed)]
+);
 
-  CREATE TABLE IF NOT EXISTS incidents (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    property_id INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL CHECK (status IN ('abierta', 'en_curso', 'resuelta')) DEFAULT 'abierta',
-    photo_uri TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
-  );
+export type Property = typeof properties.$inferSelect;
+export type Transaction = typeof transactions.$inferSelect & { property_name?: string };
+export type Incident = typeof incidents.$inferSelect & { property_name?: string };
+export type Reminder = typeof reminders.$inferSelect & { property_name?: string | null };
 
-  CREATE TABLE IF NOT EXISTS reminders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    property_id INTEGER,
-    title TEXT NOT NULL,
-    category TEXT NOT NULL CHECK (category IN ('cobro', 'seguro', 'ibi', 'contrato', 'otro')) DEFAULT 'otro',
-    due_date TEXT NOT NULL,
-    completed INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE SET NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_transactions_property_date ON transactions(property_id, date);
-  CREATE INDEX IF NOT EXISTS idx_reminders_due_date ON reminders(due_date, completed);
-`;
+export interface PropertyFiscalSummary {
+  property_id: number;
+  property_name: string;
+  cadastral_ref: string;
+  regime: PropertyRegime;
+  total_income: number;
+  total_expense: number;
+  net_yield: number;
+}

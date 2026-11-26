@@ -15,7 +15,7 @@ Aplicación móvil **offline-first** construida con **React Native + Expo (SDK 5
 | Framework | Expo SDK 58 (`~58.0.26`), React 19, React Native 0.88, TypeScript |
 | Navegación | `expo-router` (rutas basadas en archivos en `src/app/`) |
 | UI / Estilos | `react-native-paper` (Material Design 3, tema claro/oscuro) |
-| Base de datos | `expo-sqlite` con migraciones mediante `PRAGMA user_version` |
+| Base de datos | `expo-sqlite` + **Drizzle ORM** (`drizzle-orm` / `drizzle-kit` para migraciones SQL versionadas) |
 | Facturas y cámara | `expo-image-picker`, `expo-document-picker` |
 | Backups y Excel | `expo-file-system`, `jszip`, `xlsx`, `expo-sharing` |
 | Avisos locales *(planificado)* | `expo-notifications` |
@@ -35,7 +35,10 @@ npm install
 # Arrancar servidor de desarrollo (Expo Go / emulador)
 npx expo start
 
+# Generar migración SQL tras editar src/db/schema.ts
+npm run db:generate
+
 # Verificación de tipos y lint
-npx tsc --noEmit
+npm run typecheck
 npx expo lint
 ```

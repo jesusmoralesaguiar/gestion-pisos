@@ -8,7 +8,7 @@ Este documento describe la arquitectura técnica, las decisiones de diseño, el 
 
 - **Offline-first sin backend:** Toda la información reside en el dispositivo del usuario. No hay cuentas, servidores ni cuotas mensuales.
 - **Portabilidad y seguridad de datos:** La base de datos SQLite y la carpeta de adjuntos (`attachments/`) se pueden empaquetar en un único archivo `.zip` para compartirlo por WhatsApp, Drive o correo e importarlo en otro dispositivo familiar.
-- **Migraciones versionadas desde el día 1:** Toda evolución del esquema SQLite se gestiona mediante `PRAGMA user_version` para actualizar la app sin pérdida de datos.
+- **Migraciones versionadas desde el día 1:** El esquema vive tipado en `src/db/schema.ts` y toda evolución se genera en orden con `drizzle-kit` (`drizzle/*.sql` + `meta/_journal.json`) y se ejecuta transaccionalmente al arrancar mediante `drizzle-orm/expo-sqlite/migrator` (`__drizzle_migrations`).
 - **UX directa y legible:** Componentes Material Design (`react-native-paper`) con tipografía clara, botones grandes y 4 pestañas principales.
 
 ---
@@ -17,7 +17,7 @@ Este documento describe la arquitectura técnica, las decisiones de diseño, el 
 
 - **Navegación:** `expo-router` con `Tabs` en `src/app/_layout.tsx`.
 - **UI:** `react-native-paper` (`PaperProvider`) con soporte automático de tema claro/oscuro (`src/constants/paperTheme.ts`) e iconos de `@expo/vector-icons/MaterialCommunityIcons`.
-- **Persistencia estructurada:** `expo-sqlite` (`gestion_pisos.db`).
+- **Persistencia estructurada:** `expo-sqlite` (`gestion_pisos.db`) gestionado con **Drizzle ORM** (`drizzle-orm` + `drizzle-kit`). Metro (`metro.config.js`) y Babel (`babel.config.js` + `babel-plugin-inline-import`) empaquetan los `.sql` de `drizzle/` en el bundle móvil.
 - **Adjuntos (fotos y PDFs):** `expo-image-picker` y `expo-document-picker`, copiados al directorio persistente `Paths.document/attachments/` mediante `expo-file-system`.
 - **Exportación fiscal:** `xlsx` genera libros Excel con resumen anual por inmueble y detalle de movimientos.
 - **Copia de seguridad:** `jszip` empaqueta `SQLite/gestion_pisos.db` + `attachments/` en un `.zip`, compartido con `expo-sharing`.
@@ -30,7 +30,11 @@ Este documento describe la arquitectura técnica, las decisiones de diseño, el 
 ```text
 gestion-pisos/
 ├── app.json                  # Configuración de Expo, plugins y esquemas
-├── package.json              # Dependencias (Expo SDK 58)
+├── babel.config.js           # Preset Expo + inline-import para archivos .sql
+├── drizzle.config.ts         # Configuración de Drizzle Kit (dialecto sqlite, driver expo)
+├── metro.config.js           # Registra extensión .sql en sourceExts de Metro
+├── package.json              # Dependencias (Expo SDK 58 + Drizzle ORM)
+├── drizzle/                  # Migraciones SQL generadas, snapshot y _journal.json
 ├── src/
 │   ├── app/                  # Rutas de Expo Router (solo pantallas y layouts)
 │   │   ├── _layout.tsx       # Inicialización SQLite + SplashScreen + Tabs MVP
@@ -42,8 +46,8 @@ gestion-pisos/
 │   │   ├── paperTheme.ts     # Tema claro/oscuro de React Native Paper
 │   │   └── theme.ts          # Tokens de color y espaciado
 │   ├── db/
-│   │   ├── schema.ts         # Tipos TypeScript, categorías fiscales y SQL V1
-│   │   └── database.ts       # Conexión singleton, migraciones y queries CRUD
+│   │   ├── schema.ts         # Tablas Drizzle ORM, tipos inferidos y categorías fiscales
+│   │   └── database.ts       # Conexión singleton, migraciones Drizzle y queries tipadas
 │   ├── services/
 │   │   └── backup.ts         # Gestión de adjuntos, export/import .zip y .xlsx
 │   ├── components/           # Componentes reutilizables

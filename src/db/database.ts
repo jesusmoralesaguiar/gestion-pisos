@@ -1,7 +1,15 @@
+import { and, asc, desc, eq, like, ne, sql } from 'drizzle-orm';
+import { drizzle, type ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite';
+import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
 import * as SQLite from 'expo-sqlite';
+
+import migrations from '../../drizzle/migrations';
+import * as schema from './schema';
 import {
-  CURRENT_DB_VERSION,
-  MIGRATION_V1_SQL,
+  incidents,
+  properties,
+  reminders,
+  transactions,
   type Incident,
   type IncidentStatus,
   type Property,
@@ -16,45 +24,63 @@ import {
 
 export const DB_NAME = 'gestion_pisos.db';
 
-let dbInstance: SQLite.SQLiteDatabase | null = null;
+export type AppDatabase = ExpoSQLiteDatabase<typeof schema>;
 
-export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
-  if (dbInstance) {
-    return dbInstance;
+let expoDb: SQLite.SQLiteDatabase | null = null;
+let drizzleDb: AppDatabase | null = null;
+let initPromise: Promise<AppDatabase> | null = null;
+
+/**
+ * Returns the initialized Drizzle ORM database instance, running any pending
+ * SQLite migrations in order on first open.
+ */
+export async function getDatabase(): Promise<AppDatabase> {
+  if (drizzleDb) {
+    return drizzleDb;
   }
-  const db = await SQLite.openDatabaseAsync(DB_NAME);
-  await migrateDbIfNeeded(db);
-  dbInstance = db;
-  return db;
+  if (initPromise) {
+    return initPromise;
+  }
+
+  initPromise = (async () => {
+    const db = SQLite.openDatabaseSync(DB_NAME, { enableChangeListener: true });
+    try {
+      db.execSync('PRAGMA foreign_keys = ON;');
+      const orm = drizzle(db, { schema });
+      await migrate(orm, migrations);
+      expoDb = db;
+      drizzleDb = orm;
+      return orm;
+    } catch (err) {
+      initPromise = null;
+      await db.closeAsync().catch(() => {});
+      throw err;
+    }
+  })();
+
+  return initPromise;
 }
 
+/**
+ * Closes the active SQLite connection so backup imports can safely replace the DB file.
+ */
 export async function closeDatabase(): Promise<void> {
-  if (dbInstance) {
-    await dbInstance.closeAsync();
-    dbInstance = null;
+  if (initPromise) {
+    await initPromise.catch(() => {});
   }
-}
-
-async function migrateDbIfNeeded(db: SQLite.SQLiteDatabase): Promise<void> {
-  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-  const currentVersion = row?.user_version ?? 0;
-
-  if (currentVersion >= CURRENT_DB_VERSION) {
-    await db.execAsync('PRAGMA foreign_keys = ON;');
-    return;
+  if (expoDb) {
+    await expoDb.closeAsync();
   }
-
-  if (currentVersion === 0) {
-    await db.execAsync(MIGRATION_V1_SQL);
-    await db.execAsync(`PRAGMA user_version = ${CURRENT_DB_VERSION};`);
-  }
+  expoDb = null;
+  drizzleDb = null;
+  initPromise = null;
 }
 
 // --- Properties ---
 
 export async function getAllProperties(): Promise<Property[]> {
   const db = await getDatabase();
-  return db.getAllAsync<Property>('SELECT * FROM properties ORDER BY name ASC');
+  return db.select().from(properties).orderBy(asc(properties.name));
 }
 
 export async function createProperty(input: {
@@ -68,26 +94,25 @@ export async function createProperty(input: {
   notes?: string;
 }): Promise<number> {
   const db = await getDatabase();
-  const result = await db.runAsync(
-    `INSERT INTO properties (name, address, cadastral_ref, regime, monthly_rent, payment_day, tenant_name, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.name.trim(),
-      input.address?.trim() ?? '',
-      input.cadastral_ref?.trim().toUpperCase() ?? '',
-      input.regime,
-      input.monthly_rent,
-      input.payment_day ?? 5,
-      input.tenant_name?.trim() ?? '',
-      input.notes?.trim() ?? '',
-    ]
-  );
-  return result.lastInsertRowId;
+  const [inserted] = await db
+    .insert(properties)
+    .values({
+      name: input.name.trim(),
+      address: input.address?.trim() ?? '',
+      cadastral_ref: input.cadastral_ref?.trim().toUpperCase() ?? '',
+      regime: input.regime,
+      monthly_rent: input.monthly_rent,
+      payment_day: input.payment_day ?? 5,
+      tenant_name: input.tenant_name?.trim() ?? '',
+      notes: input.notes?.trim() ?? '',
+    })
+    .returning({ id: properties.id });
+  return inserted.id;
 }
 
 export async function deleteProperty(id: number): Promise<void> {
   const db = await getDatabase();
-  await db.runAsync('DELETE FROM properties WHERE id = ?', [id]);
+  await db.delete(properties).where(eq(properties.id, id));
 }
 
 // --- Transactions ---
@@ -105,97 +130,132 @@ export async function createTransaction(input: {
   attachment_uri?: string | null;
 }): Promise<number> {
   const db = await getDatabase();
-  const result = await db.runAsync(
-    `INSERT INTO transactions (property_id, type, category, amount, base_amount, vat_amount, date, status, description, attachment_uri)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.property_id,
-      input.type,
-      input.category,
-      input.amount,
-      input.base_amount ?? input.amount,
-      input.vat_amount ?? 0,
-      input.date,
-      input.status ?? 'completado',
-      input.description?.trim() ?? '',
-      input.attachment_uri ?? null,
-    ]
-  );
-  return result.lastInsertRowId;
+  const [inserted] = await db
+    .insert(transactions)
+    .values({
+      property_id: input.property_id,
+      type: input.type,
+      category: input.category,
+      amount: input.amount,
+      base_amount: input.base_amount ?? input.amount,
+      vat_amount: input.vat_amount ?? 0,
+      date: input.date,
+      status: input.status ?? 'completado',
+      description: input.description?.trim() ?? '',
+      attachment_uri: input.attachment_uri ?? null,
+    })
+    .returning({ id: transactions.id });
+  return inserted.id;
 }
 
 export async function getRecentTransactions(limit = 30): Promise<Transaction[]> {
   const db = await getDatabase();
-  return db.getAllAsync<Transaction>(
-    `SELECT t.*, p.name as property_name
-     FROM transactions t
-     JOIN properties p ON p.id = t.property_id
-     ORDER BY t.date DESC, t.id DESC
-     LIMIT ?`,
-    [limit]
-  );
+  return db
+    .select({
+      id: transactions.id,
+      property_id: transactions.property_id,
+      type: transactions.type,
+      category: transactions.category,
+      amount: transactions.amount,
+      base_amount: transactions.base_amount,
+      vat_amount: transactions.vat_amount,
+      date: transactions.date,
+      status: transactions.status,
+      description: transactions.description,
+      attachment_uri: transactions.attachment_uri,
+      created_at: transactions.created_at,
+      property_name: properties.name,
+    })
+    .from(transactions)
+    .innerJoin(properties, eq(properties.id, transactions.property_id))
+    .orderBy(desc(transactions.date), desc(transactions.id))
+    .limit(limit);
 }
 
 export async function getTransactionsByYear(year: number): Promise<Transaction[]> {
   const db = await getDatabase();
   const prefix = `${year}-%`;
-  return db.getAllAsync<Transaction>(
-    `SELECT t.*, p.name as property_name
-     FROM transactions t
-     JOIN properties p ON p.id = t.property_id
-     WHERE t.date LIKE ?
-     ORDER BY t.date ASC, t.id ASC`,
-    [prefix]
-  );
+  return db
+    .select({
+      id: transactions.id,
+      property_id: transactions.property_id,
+      type: transactions.type,
+      category: transactions.category,
+      amount: transactions.amount,
+      base_amount: transactions.base_amount,
+      vat_amount: transactions.vat_amount,
+      date: transactions.date,
+      status: transactions.status,
+      description: transactions.description,
+      attachment_uri: transactions.attachment_uri,
+      created_at: transactions.created_at,
+      property_name: properties.name,
+    })
+    .from(transactions)
+    .innerJoin(properties, eq(properties.id, transactions.property_id))
+    .where(like(transactions.date, prefix))
+    .orderBy(asc(transactions.date), asc(transactions.id));
 }
 
 export async function getMonthlyRentPaidPropertyIds(yearMonth: string): Promise<Set<number>> {
   const db = await getDatabase();
-  const rows = await db.getAllAsync<{ property_id: number }>(
-    `SELECT DISTINCT property_id
-     FROM transactions
-     WHERE type = 'ingreso'
-       AND status = 'completado'
-       AND date LIKE ?`,
-    [`${yearMonth}-%`]
-  );
+  const rows = await db
+    .selectDistinct({ property_id: transactions.property_id })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.type, 'ingreso'),
+        eq(transactions.status, 'completado'),
+        like(transactions.date, `${yearMonth}-%`)
+      )
+    );
   return new Set(rows.map((r) => r.property_id));
 }
 
 export async function getMonthTotals(yearMonth: string): Promise<{ income: number; expense: number }> {
   const db = await getDatabase();
-  const rows = await db.getAllAsync<{ type: TransactionType; total: number }>(
-    `SELECT type, COALESCE(SUM(amount), 0) as total
-     FROM transactions
-     WHERE status = 'completado' AND date LIKE ?
-     GROUP BY type`,
-    [`${yearMonth}-%`]
-  );
+  const rows = await db
+    .select({
+      type: transactions.type,
+      total: sql<number>`COALESCE(SUM(${transactions.amount}), 0)`,
+    })
+    .from(transactions)
+    .where(and(eq(transactions.status, 'completado'), like(transactions.date, `${yearMonth}-%`)))
+    .groupBy(transactions.type);
+
   let income = 0;
   let expense = 0;
   for (const row of rows) {
-    if (row.type === 'ingreso') income = row.total;
-    if (row.type === 'gasto') expense = row.total;
+    if (row.type === 'ingreso') income = Number(row.total) || 0;
+    if (row.type === 'gasto') expense = Number(row.total) || 0;
   }
   return { income, expense };
 }
 
 export async function deleteTransaction(id: number): Promise<void> {
   const db = await getDatabase();
-  await db.runAsync('DELETE FROM transactions WHERE id = ?', [id]);
+  await db.delete(transactions).where(eq(transactions.id, id));
 }
 
 // --- Incidents ---
 
 export async function getOpenIncidents(): Promise<Incident[]> {
   const db = await getDatabase();
-  return db.getAllAsync<Incident>(
-    `SELECT i.*, p.name as property_name
-     FROM incidents i
-     JOIN properties p ON p.id = i.property_id
-     WHERE i.status != 'resuelta'
-     ORDER BY i.created_at DESC`
-  );
+  return db
+    .select({
+      id: incidents.id,
+      property_id: incidents.property_id,
+      title: incidents.title,
+      description: incidents.description,
+      status: incidents.status,
+      photo_uri: incidents.photo_uri,
+      created_at: incidents.created_at,
+      property_name: properties.name,
+    })
+    .from(incidents)
+    .innerJoin(properties, eq(properties.id, incidents.property_id))
+    .where(ne(incidents.status, 'resuelta'))
+    .orderBy(desc(incidents.created_at));
 }
 
 export async function createIncident(input: {
@@ -205,30 +265,42 @@ export async function createIncident(input: {
   photo_uri?: string | null;
 }): Promise<number> {
   const db = await getDatabase();
-  const result = await db.runAsync(
-    `INSERT INTO incidents (property_id, title, description, photo_uri)
-     VALUES (?, ?, ?, ?)`,
-    [input.property_id, input.title.trim(), input.description?.trim() ?? '', input.photo_uri ?? null]
-  );
-  return result.lastInsertRowId;
+  const [inserted] = await db
+    .insert(incidents)
+    .values({
+      property_id: input.property_id,
+      title: input.title.trim(),
+      description: input.description?.trim() ?? '',
+      photo_uri: input.photo_uri ?? null,
+    })
+    .returning({ id: incidents.id });
+  return inserted.id;
 }
 
 export async function updateIncidentStatus(id: number, status: IncidentStatus): Promise<void> {
   const db = await getDatabase();
-  await db.runAsync('UPDATE incidents SET status = ? WHERE id = ?', [status, id]);
+  await db.update(incidents).set({ status }).where(eq(incidents.id, id));
 }
 
 // --- Reminders ---
 
 export async function getPendingReminders(): Promise<Reminder[]> {
   const db = await getDatabase();
-  return db.getAllAsync<Reminder>(
-    `SELECT r.*, p.name as property_name
-     FROM reminders r
-     LEFT JOIN properties p ON p.id = r.property_id
-     WHERE r.completed = 0
-     ORDER BY r.due_date ASC`
-  );
+  return db
+    .select({
+      id: reminders.id,
+      property_id: reminders.property_id,
+      title: reminders.title,
+      category: reminders.category,
+      due_date: reminders.due_date,
+      completed: reminders.completed,
+      created_at: reminders.created_at,
+      property_name: properties.name,
+    })
+    .from(reminders)
+    .leftJoin(properties, eq(properties.id, reminders.property_id))
+    .where(eq(reminders.completed, 0))
+    .orderBy(asc(reminders.due_date));
 }
 
 export async function createReminder(input: {
@@ -238,17 +310,24 @@ export async function createReminder(input: {
   due_date: string;
 }): Promise<number> {
   const db = await getDatabase();
-  const result = await db.runAsync(
-    `INSERT INTO reminders (property_id, title, category, due_date)
-     VALUES (?, ?, ?, ?)`,
-    [input.property_id ?? null, input.title.trim(), input.category, input.due_date]
-  );
-  return result.lastInsertRowId;
+  const [inserted] = await db
+    .insert(reminders)
+    .values({
+      property_id: input.property_id ?? null,
+      title: input.title.trim(),
+      category: input.category,
+      due_date: input.due_date,
+    })
+    .returning({ id: reminders.id });
+  return inserted.id;
 }
 
 export async function toggleReminderCompleted(id: number, completed: boolean): Promise<void> {
   const db = await getDatabase();
-  await db.runAsync('UPDATE reminders SET completed = ? WHERE id = ?', [completed ? 1 : 0, id]);
+  await db
+    .update(reminders)
+    .set({ completed: completed ? 1 : 0 })
+    .where(eq(reminders.id, id));
 }
 
 // --- Fiscal Summary ---
@@ -256,20 +335,31 @@ export async function toggleReminderCompleted(id: number, completed: boolean): P
 export async function getFiscalSummaryByYear(year: number): Promise<PropertyFiscalSummary[]> {
   const db = await getDatabase();
   const prefix = `${year}-%`;
-  return db.getAllAsync<PropertyFiscalSummary>(
-    `SELECT
-       p.id as property_id,
-       p.name as property_name,
-       p.cadastral_ref,
-       p.regime,
-       COALESCE(SUM(CASE WHEN t.type = 'ingreso' AND t.status = 'completado' AND t.date LIKE ? THEN t.amount ELSE 0 END), 0) as total_income,
-       COALESCE(SUM(CASE WHEN t.type = 'gasto' AND t.status = 'completado' AND t.date LIKE ? THEN t.amount ELSE 0 END), 0) as total_expense,
-       COALESCE(SUM(CASE WHEN t.type = 'ingreso' AND t.status = 'completado' AND t.date LIKE ? THEN t.amount ELSE 0 END), 0) -
-       COALESCE(SUM(CASE WHEN t.type = 'gasto' AND t.status = 'completado' AND t.date LIKE ? THEN t.amount ELSE 0 END), 0) as net_yield
-     FROM properties p
-     LEFT JOIN transactions t ON t.property_id = p.id
-     GROUP BY p.id
-     ORDER BY p.name ASC`,
-    [prefix, prefix, prefix, prefix]
-  );
+  const rows = await db
+    .select({
+      property_id: properties.id,
+      property_name: properties.name,
+      cadastral_ref: properties.cadastral_ref,
+      regime: properties.regime,
+      total_income: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'ingreso' AND ${transactions.status} = 'completado' AND ${transactions.date} LIKE ${prefix} THEN ${transactions.amount} ELSE 0 END), 0)`,
+      total_expense: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'gasto' AND ${transactions.status} = 'completado' AND ${transactions.date} LIKE ${prefix} THEN ${transactions.amount} ELSE 0 END), 0)`,
+    })
+    .from(properties)
+    .leftJoin(transactions, eq(transactions.property_id, properties.id))
+    .groupBy(properties.id)
+    .orderBy(asc(properties.name));
+
+  return rows.map((row) => {
+    const total_income = Number(row.total_income) || 0;
+    const total_expense = Number(row.total_expense) || 0;
+    return {
+      property_id: row.property_id,
+      property_name: row.property_name,
+      cadastral_ref: row.cadastral_ref,
+      regime: row.regime,
+      total_income,
+      total_expense,
+      net_yield: total_income - total_expense,
+    };
+  });
 }
