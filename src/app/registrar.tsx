@@ -2,7 +2,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import {
   Button,
   Card,
@@ -21,7 +21,12 @@ import {
   type Property,
   type TransactionType,
 } from '@/db/schema';
-import { saveAttachmentLocally } from '@/services/backup';
+import {
+  compressAndSaveImageAttachment,
+  deleteAttachmentLocally,
+  saveAttachmentLocally,
+} from '@/services/backup';
+import { getLocalISODate, isValidISODate } from '@/utils/dates';
 
 export default function RegistrarScreen() {
   const theme = useTheme();
@@ -33,7 +38,7 @@ export default function RegistrarScreen() {
   const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0]);
   const [amount, setAmount] = useState('');
   const [vatAmount, setVatAmount] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => getLocalISODate());
   const [description, setDescription] = useState('');
   const [attachmentName, setAttachmentName] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -66,7 +71,10 @@ export default function RegistrarScreen() {
       quality: 0.75,
     });
     if (!res.canceled && res.assets?.[0]) {
-      const saved = await saveAttachmentLocally(res.assets[0].uri, 'jpg');
+      const saved = await compressAndSaveImageAttachment(res.assets[0].uri);
+      if (attachmentName) {
+        deleteAttachmentLocally(attachmentName);
+      }
       setAttachmentName(saved);
     }
   };
@@ -78,8 +86,13 @@ export default function RegistrarScreen() {
     });
     if (!res.canceled && res.assets?.[0]) {
       const asset = res.assets[0];
-      const ext = asset.name.split('.').pop() || 'pdf';
-      const saved = await saveAttachmentLocally(asset.uri, ext);
+      const isImage = asset.mimeType?.startsWith('image/') ?? false;
+      const saved = isImage
+        ? await compressAndSaveImageAttachment(asset.uri)
+        : await saveAttachmentLocally(asset.uri, asset.name.split('.').pop() || 'pdf');
+      if (attachmentName) {
+        deleteAttachmentLocally(attachmentName);
+      }
       setAttachmentName(saved);
     }
   };
@@ -94,6 +107,11 @@ export default function RegistrarScreen() {
       Alert.alert('Importe inválido', 'Introduce un importe mayor que 0.');
       return;
     }
+    const trimmedDate = date.trim();
+    if (!isValidISODate(trimmedDate)) {
+      Alert.alert('Fecha inválida', 'Usa el formato AAAA-MM-DD (ej. 2026-11-26).');
+      return;
+    }
     const numVat = Number(vatAmount.replace(',', '.')) || 0;
     const base = Math.max(0, numAmount - numVat);
 
@@ -106,7 +124,7 @@ export default function RegistrarScreen() {
         amount: numAmount,
         base_amount: base,
         vat_amount: numVat,
-        date: date.trim() || new Date().toISOString().slice(0, 10),
+        date: trimmedDate,
         status: 'completado',
         description,
         attachment_uri: attachmentName,
@@ -123,6 +141,21 @@ export default function RegistrarScreen() {
   };
 
   const categories = type === 'ingreso' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const selectedProperty = properties.find((p) => p.id === selectedPropertyId);
+
+  const taxInputLabel = (() => {
+    if (!selectedProperty || selectedProperty.tax_region === 'canarias') {
+      if (
+        type === 'ingreso' &&
+        selectedProperty &&
+        (selectedProperty.regime === 'residencial' || selectedProperty.igic_regime === 'repep')
+      ) {
+        return 'IGIC (0 € exento)';
+      }
+      return 'IGIC incluido (€)';
+    }
+    return 'IVA incluido (€)';
+  })();
 
   if (properties.length === 0) {
     return (
@@ -138,8 +171,10 @@ export default function RegistrarScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <ScrollView contentContainerStyle={styles.content}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <SegmentedButtons
           value={type}
           onValueChange={handleTypeChange}
@@ -196,7 +231,7 @@ export default function RegistrarScreen() {
                 style={{ flex: 2 }}
               />
               <TextInput
-                label="IVA incluido (€)"
+                label={taxInputLabel}
                 value={vatAmount}
                 onChangeText={setVatAmount}
                 keyboardType="decimal-pad"
@@ -241,7 +276,10 @@ export default function RegistrarScreen() {
             {attachmentName && (
               <Chip
                 icon="paperclip"
-                onClose={() => setAttachmentName(null)}
+                onClose={() => {
+                  deleteAttachmentLocally(attachmentName);
+                  setAttachmentName(null);
+                }}
                 style={{ alignSelf: 'flex-start' }}>
                 Adjunto guardado ({attachmentName})
               </Chip>
@@ -266,7 +304,7 @@ export default function RegistrarScreen() {
         duration={2500}>
         {snackbarMsg}
       </Snackbar>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

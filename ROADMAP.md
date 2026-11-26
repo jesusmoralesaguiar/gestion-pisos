@@ -30,28 +30,38 @@ Plan de desarrollo incremental para llevar la aplicación desde los cimientos ha
 
 ### Deuda técnica y mejoras detectadas (Hardening MVP)
 
-- [ ] **Integridad de datos y backups:**
-  - [ ] Cerrar SQLite (`closeDatabase()`) o hacer checkpoint WAL antes de empaquetar `.db` en `exportBackupZip()`, y limpiar posibles ficheros `-wal`/`-shm` al restaurar en `importBackupZip()`.
-  - [ ] Eliminar adjuntos huérfanos en `Paths.document/attachments/` al borrar pisos, borrar movimientos o quitar un adjunto del formulario.
-  - [ ] Crear helper de fechas locales (`src/utils/dates.ts`) para reemplazar `new Date().toISOString().slice(0, 10)` y evitar desfases de día/mes por UTC en España.
-  - [ ] Afinar `getMonthlyRentPaidPropertyIds` para contar únicamente ingresos de alquiler (no fianzas u otros) y bloquear el botón *"Cobrar"* contra doble toque rápido en `index.tsx`.
+- [x] **Integridad de datos y backups:**
+  - [x] Cerrar SQLite (`closeDatabase()`) antes de empaquetar `.db` en `exportBackupZip()`, validar cabecera SQLite y limpiar posibles ficheros `-wal`/`-shm` al restaurar en `importBackupZip()`.
+  - [x] Eliminar adjuntos huérfanos en `Paths.document/attachments/` al borrar pisos, borrar movimientos o quitar/reemplazar un adjunto del formulario.
+  - [x] Crear helper de fechas locales (`src/utils/dates.ts`) para reemplazar `new Date().toISOString().slice(0, 10)` y evitar desfases de día/mes por UTC en España.
+  - [x] Afinar `getMonthlyRentPaidPropertyIds` para contar únicamente ingresos de alquiler (no fianzas u otros) y bloquear el botón *"Cobrar"* contra doble toque rápido en `index.tsx`.
+  - [x] Excluir `Fianza recibida` del rendimiento neto en `getFiscalSummaryByYear` / `.xlsx`.
+  - [x] Soporte fiscal de **Islas Canarias (IGIC)** (`tax_region`, `igic_regime`: `repep` | `general_420`) consolidado en la migración inicial `0000` de Drizzle, etiqueta dinámica IGIC/IVA en `registrar.tsx` y cómputo IRPF por Base (Mod. 420) vs. Total (REPEP/residencial).
+  - [x] Comprimir/redimensionar fotos de facturas al guardarlas (`expo-image-manipulator`, máx. 1600 px) para mantener backups `.zip` ligeros y enviables por WhatsApp.
 - [ ] **UX móvil y CRUD completo:**
+  - [x] Crear helper `formatEUR()` con `Intl.NumberFormat('es-ES')` para mostrar importes en formato español (`1.250,00 €`).
+  - [x] Añadir pantalla de error recuperable al arrancar la app (`src/app/_layout.tsx`) si falla `getDatabase()` o una migración de Drizzle, ofreciendo **Reintentar** o **Restaurar copia `.zip`**.
   - [ ] Permitir editar pisos existentes (renta, inquilino, día de cobro, referencia catastral).
   - [ ] Permitir ver historial completo de movimientos, editarlos y eliminarlos (con confirmación).
-  - [ ] Sustituir o validar estrictamente la entrada manual de fecha (`AAAA-MM-DD`) usando un selector nativo (`@react-native-community/datetimepicker`).
-  - [ ] Añadir `KeyboardAvoidingView` y `keyboardShouldPersistTaps="handled"` en formularios (`registrar.tsx` y diálogos de `pisos.tsx`).
-- [ ] **Higiene del repositorio y tooling:**
+  - [x] Validar estrictamente la entrada de fecha (`isValidISODate` en `AAAA-MM-DD`).
+  - [ ] Sustituir la entrada manual de fecha por selector nativo (`@react-native-community/datetimepicker`).
+  - [x] Añadir `KeyboardAvoidingView` y `keyboardShouldPersistTaps="handled"` en `registrar.tsx` (pendiente revisar diálogos de `pisos.tsx` si crecen).
+- [x] **Higiene del repositorio y tooling:**
   - [x] Añadir script `"typecheck": "tsc --noEmit"` (y `"db:generate"`) en `package.json`.
-  - [ ] Eliminar archivos residuales de la plantilla inicial de Expo no utilizados (`app-tabs.*`, `animated-icon.*`, `web-badge.tsx`, `hint-row.tsx`, `use-color-scheme.web.ts`) y dejar `npx tsc --noEmit` y `npx expo lint` en 0 errores, además de pasar `npx expo-doctor` periódicamente.
+  - [x] Eliminar archivos residuales de la plantilla inicial de Expo no utilizados (`app-tabs.*`, `animated-icon.*`, `web-badge.tsx`, `hint-row.tsx`, `use-color-scheme.web.ts`) y dejar `npx tsc --noEmit` y `npx expo lint` en 0 errores (pasar `npx expo-doctor` periódicamente).
 
 ---
 
-## Fase 2: Contratos, Estancias y Avisos Locales
+## Fase 2: Contratos, Estancias, Fiscalidad Avanzada y Avisos Locales
 
-- [ ] **Migración SQLite V2 (`leases`):**
+- [ ] **Migración SQLite V2 (`leases` y campos fiscales):**
   - [ ] Crear tabla `leases` para historial de contratos residenciales (inquilino, inicio/fin, renta, día de cobro, fianza) y estancias vacacionales (plataforma, check-in, check-out).
   - [ ] Migrar automáticamente los datos de contrato existentes en `properties` sin pérdida de información.
   - [ ] Añadir cálculo de **días alquilados vs. días vacíos a disposición** por inmueble y año fiscal para la declaración de la Renta.
+  - [ ] Añadir campo opcional `billing_month` (`YYYY-MM`) en `transactions` para separar el mes devengado de la fecha real de cobro (pagos atrasados o parciales).
+  - [ ] Añadir campos opcionales en `properties` para amortización del 3 % en IRPF (`cadastral_construction_value` y `acquisition_value`).
+- [ ] **Paquete Gestoría anual (`src/services/backup.ts`):**
+  - [ ] Exportar **"Paquete Gestoría \<Año\>.zip"** distinto al backup familiar: incluye el `.xlsx` del ejercicio y únicamente las facturas de ese año renombradas de forma legible (`YYYY-MM-DD_Piso_Categoria_Importe.ext`).
 - [ ] **Enlace Incidencia -> Gasto:**
   - [ ] Añadir `transaction_id` en `incidents` para vincular una avería con la factura de reparación correspondiente.
 - [ ] **Titularidad, Copropiedad y Reparto Fiscal por Declarante (Gananciales, Privativos y Herencias):**
@@ -68,7 +78,10 @@ Plan de desarrollo incremental para llevar la aplicación desde los cimientos ha
     - [ ] Recordar la imputación proporcional de rentas inmobiliarias por días vacíos entre todos los copropietarios.
 - [ ] **Notificaciones locales (`expo-notifications`):**
   - [ ] Instalar `expo-notifications` con `npx expo install expo-notifications`.
-  - [ ] Programar avisos locales periódicos para día de cobro mensual, vencimientos de seguro, IBI y revisión anual de contrato/IPC.
+  - [ ] Programar avisos locales periódicos para día de cobro mensual, vencimientos de seguro, IBI, revisión anual de contrato/IPC y plazos de **IGIC Canarias (Modelo 420 trimestral / Modelo 425 anual)** cuando aplique.
+- [ ] **Histórico fiscal avanzado (Canarias / fianzas):**
+  - [ ] Permitir historial de cambios de régimen IGIC (`REPEP` <-> `Mod. 420`) dentro de un mismo ejercicio fiscal o guardar el régimen en cada transacción.
+  - [ ] Permitir convertir total o parcialmente una `Fianza recibida` en ingreso computable si se retiene por desperfectos o impagos.
 
 ---
 
@@ -76,9 +89,11 @@ Plan de desarrollo incremental para llevar la aplicación desde los cimientos ha
 
 - [ ] **Tests automatizados:**
   - [ ] Configurar suite de tests (Jest) para migraciones SQLite (V1 -> V2), cálculos fiscales (ingresos, gastos, rendimiento neto, días alquilados) y generación de `.xlsx` / `.zip`.
-- [ ] **Pulido de accesibilidad y UX:**
+- [ ] **Pulido de accesibilidad, privacidad y soporte:**
   - [ ] Validar tamaño de fuentes, contraste y flujos con el usuario final (uso real en móvil).
   - [ ] Mensajes de confirmación claros en acciones destructivas (eliminar piso, restaurar copia `.zip`).
+  - [ ] Añadir botón discreto *"Exportar diagnóstico"* (versión de app, migraciones aplicadas en `__drizzle_migrations`, tamaño de BD y últimos errores locales) para soporte familiar sin consola.
+  - [ ] Valorar bloqueo opcional por biometría o PIN (`expo-local-authentication`) para proteger rentas, NIFs y referencias catastrales.
 - [ ] **Arquitectura de pantallas:**
   - [ ] Crear ruta dinámica de ficha de inmueble (`src/app/piso/[id].tsx`) para detalle, contratos, incidencias e historial completo sin sobrecargar diálogos.
 - [ ] **Build y entrega con EAS:**

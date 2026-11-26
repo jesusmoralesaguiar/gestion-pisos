@@ -58,14 +58,17 @@ gestion-pisos/
 
 ## 4. Modelo de datos (pensado para Hacienda / IRPF)
 
-### Esquema actual (Migración V1 — `src/db/schema.ts`)
+### Esquema actual (Migración inicial `0000` — `src/db/schema.ts`)
 
 1. **`properties` (Pisos / Inmuebles)**
-   - `id`, `name` (nombre corto), `address`, `cadastral_ref` (referencia catastral para la Renta), `regime` (`residencial` | `vacacional`), `monthly_rent`, `payment_day`, `tenant_name`, `notes`, `created_at`.
+   - `id`, `name` (nombre corto), `address`, `cadastral_ref` (referencia catastral para la Renta), `regime` (`residencial` | `vacacional`), `tax_region` (`canarias` | `peninsula`), `igic_regime` (`repep` | `general_420`), `monthly_rent`, `payment_day`, `tenant_name`, `notes`, `created_at`.
 2. **`transactions` (Cobros y Gastos)**
-   - `id`, `property_id` (FK -> `properties.id`, `ON DELETE CASCADE`), `type` (`ingreso` | `gasto`), `category` (categoría fiscal), `amount` (importe total), `base_amount` (base imponible), `vat_amount` (IVA), `date` (`YYYY-MM-DD`), `status` (`completado` | `pendiente`), `description`, `attachment_uri` (nombre de archivo en `attachments/`), `created_at`.
-   - Categorías de ingreso: *Alquiler mensual, Alquiler vacacional, Fianza recibida, Otros ingresos*.
+   - `id`, `property_id` (FK -> `properties.id`, `ON DELETE CASCADE`), `type` (`ingreso` | `gasto`), `category` (categoría fiscal), `amount` (importe total), `base_amount` (base imponible), `vat_amount` (IGIC o IVA soportado/repercutido), `date` (`YYYY-MM-DD`), `status` (`completado` | `pendiente`), `description`, `attachment_uri` (nombre de archivo en `attachments/`), `created_at`.
+   - Categorías de ingreso: *Alquiler mensual, Alquiler vacacional, Fianza recibida (excluida del cómputo IRPF salvo retención), Otros ingresos*.
    - Categorías de gasto deducible: *IBI y Tasas, Comunidad, Seguro hogar / impago, Reparación y conservación, Suministros (luz, agua, gas), Intereses hipoteca, Comisión plataforma (Airbnb/Booking), Limpieza y lavandería, Gestoría / Otros*.
+   - **Regla fiscal Canarias (IGIC) vs. Península (IVA):**
+     - En **residencial** (exento de IGIC/IVA) y en **vacacional Canarias REPEP** (exento de repercutir IGIC, pero sujeto a IRPF), el rendimiento neto IRPF computa el importe total (`amount`) porque el IGIC soportado en facturas de proveedores no se deduce aparte.
+     - En **vacacional Canarias régimen general (`general_420`)**, ingresos y gastos computables para IRPF se calculan sobre la base imponible (`base_amount`), ya que el IGIC se liquida ante la Agencia Tributaria Canaria (Modelos 420/425).
 3. **`incidents` (Incidencias)**
    - `id`, `property_id` (FK -> `properties.id`), `title`, `description`, `status` (`abierta` | `en_curso` | `resuelta`), `photo_uri`, `created_at`.
 4. **`reminders` (Avisos)**

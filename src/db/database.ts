@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, like, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, like, ne, notInArray, sql } from 'drizzle-orm';
 import { drizzle, type ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite';
 import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
 import * as SQLite from 'expo-sqlite';
@@ -7,9 +7,12 @@ import migrations from '../../drizzle/migrations';
 import * as schema from './schema';
 import {
   incidents,
+  NON_TAXABLE_INCOME_CATEGORIES,
   properties,
   reminders,
+  RENT_INCOME_CATEGORIES,
   transactions,
+  type IgicRegime,
   type Incident,
   type IncidentStatus,
   type Property,
@@ -17,6 +20,7 @@ import {
   type PropertyRegime,
   type Reminder,
   type ReminderCategory,
+  type TaxRegion,
   type Transaction,
   type TransactionStatus,
   type TransactionType,
@@ -88,6 +92,8 @@ export async function createProperty(input: {
   address?: string;
   cadastral_ref?: string;
   regime: PropertyRegime;
+  tax_region?: TaxRegion;
+  igic_regime?: IgicRegime;
   monthly_rent: number;
   payment_day?: number;
   tenant_name?: string;
@@ -101,6 +107,8 @@ export async function createProperty(input: {
       address: input.address?.trim() ?? '',
       cadastral_ref: input.cadastral_ref?.trim().toUpperCase() ?? '',
       regime: input.regime,
+      tax_region: input.tax_region ?? 'canarias',
+      igic_regime: input.igic_regime ?? 'repep',
       monthly_rent: input.monthly_rent,
       payment_day: input.payment_day ?? 5,
       tenant_name: input.tenant_name?.trim() ?? '',
@@ -110,9 +118,34 @@ export async function createProperty(input: {
   return inserted.id;
 }
 
-export async function deleteProperty(id: number): Promise<void> {
+export async function getPropertyAttachmentUris(propertyId: number): Promise<string[]> {
   const db = await getDatabase();
+  const [txRows, incRows] = await Promise.all([
+    db
+      .select({ uri: transactions.attachment_uri })
+      .from(transactions)
+      .where(eq(transactions.property_id, propertyId)),
+    db
+      .select({ uri: incidents.photo_uri })
+      .from(incidents)
+      .where(eq(incidents.property_id, propertyId)),
+  ]);
+
+  const uris = new Set<string>();
+  for (const row of txRows) {
+    if (row.uri) uris.add(row.uri);
+  }
+  for (const row of incRows) {
+    if (row.uri) uris.add(row.uri);
+  }
+  return Array.from(uris);
+}
+
+export async function deleteProperty(id: number): Promise<string[]> {
+  const db = await getDatabase();
+  const attachments = await getPropertyAttachmentUris(id);
   await db.delete(properties).where(eq(properties.id, id));
+  return attachments;
 }
 
 // --- Transactions ---
@@ -206,6 +239,7 @@ export async function getMonthlyRentPaidPropertyIds(yearMonth: string): Promise<
       and(
         eq(transactions.type, 'ingreso'),
         eq(transactions.status, 'completado'),
+        inArray(transactions.category, [...RENT_INCOME_CATEGORIES]),
         like(transactions.date, `${yearMonth}-%`)
       )
     );
@@ -232,9 +266,21 @@ export async function getMonthTotals(yearMonth: string): Promise<{ income: numbe
   return { income, expense };
 }
 
-export async function deleteTransaction(id: number): Promise<void> {
+export async function getTransactionAttachmentUri(id: number): Promise<string | null> {
   const db = await getDatabase();
+  const [row] = await db
+    .select({ uri: transactions.attachment_uri })
+    .from(transactions)
+    .where(eq(transactions.id, id))
+    .limit(1);
+  return row?.uri ?? null;
+}
+
+export async function deleteTransaction(id: number): Promise<string | null> {
+  const db = await getDatabase();
+  const attachmentUri = await getTransactionAttachmentUri(id);
   await db.delete(transactions).where(eq(transactions.id, id));
+  return attachmentUri;
 }
 
 // --- Incidents ---
@@ -335,14 +381,18 @@ export async function toggleReminderCompleted(id: number, completed: boolean): P
 export async function getFiscalSummaryByYear(year: number): Promise<PropertyFiscalSummary[]> {
   const db = await getDatabase();
   const prefix = `${year}-%`;
+  const irpfAmount = sql`CASE WHEN ${properties.tax_region} = 'canarias' AND ${properties.regime} = 'vacacional' AND ${properties.igic_regime} = 'general_420' THEN ${transactions.base_amount} ELSE ${transactions.amount} END`;
+
   const rows = await db
     .select({
       property_id: properties.id,
       property_name: properties.name,
       cadastral_ref: properties.cadastral_ref,
       regime: properties.regime,
-      total_income: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'ingreso' AND ${transactions.status} = 'completado' AND ${transactions.date} LIKE ${prefix} THEN ${transactions.amount} ELSE 0 END), 0)`,
-      total_expense: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'gasto' AND ${transactions.status} = 'completado' AND ${transactions.date} LIKE ${prefix} THEN ${transactions.amount} ELSE 0 END), 0)`,
+      tax_region: properties.tax_region,
+      igic_regime: properties.igic_regime,
+      total_income: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'ingreso' AND ${transactions.status} = 'completado' AND ${transactions.date} LIKE ${prefix} AND ${notInArray(transactions.category, [...NON_TAXABLE_INCOME_CATEGORIES])} THEN ${irpfAmount} ELSE 0 END), 0)`,
+      total_expense: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'gasto' AND ${transactions.status} = 'completado' AND ${transactions.date} LIKE ${prefix} THEN ${irpfAmount} ELSE 0 END), 0)`,
     })
     .from(properties)
     .leftJoin(transactions, eq(transactions.property_id, properties.id))
@@ -357,6 +407,8 @@ export async function getFiscalSummaryByYear(year: number): Promise<PropertyFisc
       property_name: row.property_name,
       cadastral_ref: row.cadastral_ref,
       regime: row.regime,
+      tax_region: row.tax_region,
+      igic_regime: row.igic_regime,
       total_income,
       total_expense,
       net_yield: total_income - total_expense,

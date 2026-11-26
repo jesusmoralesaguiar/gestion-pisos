@@ -25,7 +25,10 @@ import {
   getOpenIncidents,
   updateIncidentStatus,
 } from '@/db/database';
-import type { Incident, Property, PropertyRegime } from '@/db/schema';
+import type { IgicRegime, Incident, Property, PropertyRegime, TaxRegion } from '@/db/schema';
+import { deleteAttachmentLocally } from '@/services/backup';
+import { getLocalISODate, isValidISODate } from '@/utils/dates';
+import { formatEUR } from '@/utils/format';
 
 export default function PisosScreen() {
   const theme = useTheme();
@@ -38,6 +41,8 @@ export default function PisosScreen() {
   const [address, setAddress] = useState('');
   const [cadastralRef, setCadastralRef] = useState('');
   const [regime, setRegime] = useState<PropertyRegime>('residencial');
+  const [taxRegion, setTaxRegion] = useState<TaxRegion>('canarias');
+  const [igicRegime, setIgicRegime] = useState<IgicRegime>('repep');
   const [monthlyRent, setMonthlyRent] = useState('');
   const [paymentDay, setPaymentDay] = useState('5');
   const [tenantName, setTenantName] = useState('');
@@ -50,7 +55,7 @@ export default function PisosScreen() {
   // Nuevo aviso dialog
   const [reminderProperty, setReminderProperty] = useState<Property | null>(null);
   const [reminderTitle, setReminderTitle] = useState('');
-  const [reminderDate, setReminderDate] = useState(new Date().toISOString().slice(0, 10));
+  const [reminderDate, setReminderDate] = useState(() => getLocalISODate());
 
   const loadData = useCallback(async () => {
     const [props, inc] = await Promise.all([getAllProperties(), getOpenIncidents()]);
@@ -77,6 +82,8 @@ export default function PisosScreen() {
       address,
       cadastral_ref: cadastralRef,
       regime,
+      tax_region: taxRegion,
+      igic_regime: taxRegion === 'canarias' && regime === 'vacacional' ? igicRegime : 'repep',
       monthly_rent: rent,
       payment_day: day,
       tenant_name: tenantName,
@@ -85,6 +92,8 @@ export default function PisosScreen() {
     setName('');
     setAddress('');
     setCadastralRef('');
+    setTaxRegion('canarias');
+    setIgicRegime('repep');
     setMonthlyRent('');
     setTenantName('');
     setShowAddProperty(false);
@@ -101,7 +110,8 @@ export default function PisosScreen() {
           text: 'Eliminar',
           style: 'destructive',
           onPress: async () => {
-            await deleteProperty(prop.id);
+            const removedAttachments = await deleteProperty(prop.id);
+            removedAttachments.forEach(deleteAttachmentLocally);
             await loadData();
           },
         },
@@ -124,11 +134,16 @@ export default function PisosScreen() {
 
   const handleSaveReminder = async () => {
     if (!reminderProperty || !reminderTitle.trim()) return;
+    const trimmedDate = reminderDate.trim();
+    if (!isValidISODate(trimmedDate)) {
+      Alert.alert('Fecha inválida', 'Introduce la fecha en formato AAAA-MM-DD (ej. 2026-11-30).');
+      return;
+    }
     await createReminder({
       property_id: reminderProperty.id,
       title: reminderTitle,
       category: 'otro',
-      due_date: reminderDate,
+      due_date: trimmedDate,
     });
     setReminderProperty(null);
     setReminderTitle('');
@@ -143,7 +158,7 @@ export default function PisosScreen() {
             <Card.Content style={{ gap: 12, alignItems: 'center', paddingVertical: 24 }}>
               <Text variant="titleMedium">No hay pisos registrados todavía</Text>
               <Text variant="bodyMedium" style={{ textAlign: 'center', color: theme.colors.onSurfaceVariant }}>
-                Pulsa el botón "+ Nuevo piso" para dar de alta tu primer inmueble residencial o vacacional.
+                Pulsa el botón «+ Nuevo piso» para dar de alta tu primer inmueble residencial o vacacional.
               </Text>
             </Card.Content>
           </Card>
@@ -168,9 +183,18 @@ export default function PisosScreen() {
                     <Chip compact icon={prop.regime === 'vacacional' ? 'beach' : 'home-account'}>
                       {prop.regime === 'vacacional' ? 'Vacacional' : 'Residencial'}
                     </Chip>
+                    <Chip compact icon="map-marker-outline">
+                      {prop.tax_region === 'canarias'
+                        ? prop.regime === 'vacacional'
+                          ? prop.igic_regime === 'general_420'
+                            ? 'Canarias · Mod. 420'
+                            : 'Canarias · REPEP'
+                          : 'Canarias · IGIC'
+                        : 'Península · IVA'}
+                    </Chip>
                     {prop.monthly_rent > 0 && (
                       <Chip compact icon="cash">
-                        {prop.monthly_rent.toFixed(0)} €/mes
+                        {formatEUR(prop.monthly_rent, { decimals: 0 })}/mes
                       </Chip>
                     )}
                     {prop.cadastral_ref ? (
@@ -254,6 +278,24 @@ export default function PisosScreen() {
                   { value: 'vacacional', label: 'Vacacional' },
                 ]}
               />
+              <SegmentedButtons
+                value={taxRegion}
+                onValueChange={(v) => setTaxRegion(v as TaxRegion)}
+                buttons={[
+                  { value: 'canarias', label: 'Canarias (IGIC)' },
+                  { value: 'peninsula', label: 'Península (IVA)' },
+                ]}
+              />
+              {taxRegion === 'canarias' && regime === 'vacacional' && (
+                <SegmentedButtons
+                  value={igicRegime}
+                  onValueChange={(v) => setIgicRegime(v as IgicRegime)}
+                  buttons={[
+                    { value: 'repep', label: 'REPEP (Exento)' },
+                    { value: 'general_420', label: 'General (Mod. 420)' },
+                  ]}
+                />
+              )}
               <TextInput
                 label="Dirección"
                 value={address}

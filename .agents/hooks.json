@@ -1,0 +1,12 @@
+{
+  "strata-verifier": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python ./scripts/strata_stop_hook.py",
+        "timeout": 120
+      }
+    ]
+  }
+}

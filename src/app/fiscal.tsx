@@ -12,7 +12,34 @@ import {
 
 import { getFiscalSummaryByYear } from '@/db/database';
 import type { PropertyFiscalSummary } from '@/db/schema';
-import { exportBackupZip, exportFiscalExcel, importBackupZip } from '@/services/backup';
+import {
+  exportBackupZip,
+  exportFiscalExcel,
+  importBackupZip,
+  resetLocalDatabase,
+} from '@/services/backup';
+import { formatEUR } from '@/utils/format';
+
+function formatPropertyFiscalSubtitle(s: PropertyFiscalSummary): string {
+  const regimeLabel = s.regime === 'vacacional' ? 'Vacacional' : 'Residencial';
+  let taxLabel: string;
+  if (s.tax_region === 'canarias') {
+    if (s.regime === 'vacacional') {
+      taxLabel =
+        s.igic_regime === 'general_420'
+          ? 'Canarias IGIC Mod. 420 (Base IRPF)'
+          : 'Canarias REPEP (Total IRPF)';
+    } else {
+      taxLabel = 'Canarias · Exento IGIC (Total IRPF)';
+    }
+  } else if (s.tax_region === 'peninsula') {
+    taxLabel = 'Península · IVA (Total IRPF)';
+  } else {
+    taxLabel = 'Régimen fiscal general (Total IRPF)';
+  }
+  const refSuffix = s.cadastral_ref ? ` · Ref: ${s.cadastral_ref}` : '';
+  return `${regimeLabel} · ${taxLabel}${refSuffix}`;
+}
 
 export default function FiscalScreen() {
   const theme = useTheme();
@@ -88,6 +115,35 @@ export default function FiscalScreen() {
     );
   };
 
+  const handleResetDatabase = () => {
+    Alert.alert(
+      'Reiniciar datos de este móvil',
+      'Se eliminarán todos los pisos, movimientos, incidencias, avisos y facturas guardadas en este dispositivo para empezar desde cero. ¿Seguro?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Borrar todo y reiniciar',
+          style: 'destructive',
+          onPress: async () => {
+            setBusyAction('reset');
+            try {
+              await resetLocalDatabase();
+              await loadData();
+              Alert.alert(
+                'Base de datos reiniciada',
+                'La aplicación está lista con una base de datos vacía.'
+              );
+            } catch (err) {
+              Alert.alert('Error al reiniciar', (err as Error).message);
+            } finally {
+              setBusyAction(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: theme.colors.background }]}
@@ -109,7 +165,7 @@ export default function FiscalScreen() {
                 Ingresos
               </Text>
               <Text variant="titleMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                +{totalIncome.toFixed(2)} €
+                {formatEUR(totalIncome, { showSign: true })}
               </Text>
             </View>
             <View style={{ flex: 1 }}>
@@ -117,7 +173,7 @@ export default function FiscalScreen() {
                 Gastos
               </Text>
               <Text variant="titleMedium" style={{ color: theme.colors.error, fontWeight: '700' }}>
-                -{totalExpense.toFixed(2)} €
+                {formatEUR(-totalExpense)}
               </Text>
             </View>
             <View style={{ flex: 1 }}>
@@ -125,10 +181,15 @@ export default function FiscalScreen() {
                 Neto
               </Text>
               <Text variant="titleMedium" style={{ fontWeight: '700' }}>
-                {totalNet.toFixed(2)} €
+                {formatEUR(totalNet)}
               </Text>
             </View>
           </View>
+
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            Nota fiscal: las fianzas recibidas no computan como ingreso IRPF. En Canarias vacacional
+            (Mod. 420) el IRPF se calcula sobre base imponible; en residencial o REPEP sobre el total.
+          </Text>
 
           <Button
             mode="contained"
@@ -157,18 +218,17 @@ export default function FiscalScreen() {
                   {s.property_name}
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  {s.regime === 'vacacional' ? 'Vacacional' : 'Residencial'}
-                  {s.cadastral_ref ? ` · Ref: ${s.cadastral_ref}` : ''}
+                  {formatPropertyFiscalSubtitle(s)}
                 </Text>
                 <View style={[styles.totalsRow, { marginTop: 6 }]}>
                   <Text variant="bodyMedium" style={{ color: theme.colors.primary }}>
-                    +{s.total_income.toFixed(2)} €
+                    {formatEUR(s.total_income, { showSign: true })}
                   </Text>
                   <Text variant="bodyMedium" style={{ color: theme.colors.error }}>
-                    -{s.total_expense.toFixed(2)} €
+                    {formatEUR(-s.total_expense)}
                   </Text>
                   <Text variant="bodyMedium" style={{ fontWeight: '700' }}>
-                    Neto: {s.net_yield.toFixed(2)} €
+                    Neto: {formatEUR(s.net_yield)}
                   </Text>
                 </View>
               </View>
@@ -203,6 +263,15 @@ export default function FiscalScreen() {
             disabled={!!busyAction}
             onPress={handleImportZip}>
             Importar copia (.zip) en este móvil
+          </Button>
+          <Button
+            mode="text"
+            icon="delete-forever-outline"
+            textColor={theme.colors.error}
+            loading={busyAction === 'reset'}
+            disabled={!!busyAction}
+            onPress={handleResetDatabase}>
+            Reiniciar datos de este móvil
           </Button>
         </Card.Content>
       </Card>

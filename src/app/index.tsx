@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import {
   Button,
@@ -23,10 +23,8 @@ import {
   toggleReminderCompleted,
 } from '@/db/database';
 import type { Incident, Property, Reminder, Transaction } from '@/db/schema';
-
-function getCurrentYearMonth(): string {
-  return new Date().toISOString().slice(0, 7);
-}
+import { getLocalISODate, getLocalYearMonth } from '@/utils/dates';
+import { formatEUR } from '@/utils/format';
 
 function getMonthLabel(yearMonth: string): string {
   const [year, month] = yearMonth.split('-');
@@ -51,9 +49,11 @@ function getMonthLabel(yearMonth: string): string {
 export default function InicioScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const currentMonth = getCurrentYearMonth();
+  const currentMonth = getLocalYearMonth();
 
   const [refreshing, setRefreshing] = useState(false);
+  const [payingPropertyId, setPayingPropertyId] = useState<number | null>(null);
+  const payingInFlightRef = useRef<Set<number>>(new Set());
   const [properties, setProperties] = useState<Property[]>([]);
   const [paidIds, setPaidIds] = useState<Set<number>>(new Set());
   const [totals, setTotals] = useState({ income: 0, expense: 0 });
@@ -90,19 +90,29 @@ export default function InicioScreen() {
   );
 
   const handleQuickMarkPaid = async (property: Property) => {
-    const today = new Date().toISOString().slice(0, 10);
-    await createTransaction({
-      property_id: property.id,
-      type: 'ingreso',
-      category: property.regime === 'vacacional' ? 'Alquiler vacacional' : 'Alquiler mensual',
-      amount: property.monthly_rent,
-      base_amount: property.monthly_rent,
-      vat_amount: 0,
-      date: today,
-      status: 'completado',
-      description: `Cobro ${getMonthLabel(currentMonth)}`,
-    });
-    await loadData();
+    if (payingInFlightRef.current.has(property.id) || paidIds.has(property.id)) {
+      return;
+    }
+    payingInFlightRef.current.add(property.id);
+    setPayingPropertyId(property.id);
+    try {
+      const today = getLocalISODate();
+      await createTransaction({
+        property_id: property.id,
+        type: 'ingreso',
+        category: property.regime === 'vacacional' ? 'Alquiler vacacional' : 'Alquiler mensual',
+        amount: property.monthly_rent,
+        base_amount: property.monthly_rent,
+        vat_amount: 0,
+        date: today,
+        status: 'completado',
+        description: `Cobro ${getMonthLabel(currentMonth)}`,
+      });
+      await loadData();
+    } finally {
+      payingInFlightRef.current.delete(property.id);
+      setPayingPropertyId(null);
+    }
   };
 
   const handleCompleteReminder = async (id: number) => {
@@ -128,7 +138,7 @@ export default function InicioScreen() {
                 Ingresos
               </Text>
               <Text variant="headlineSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                +{totals.income.toFixed(2)} €
+                {formatEUR(totals.income, { showSign: true })}
               </Text>
             </View>
             <View style={styles.summaryBox}>
@@ -136,7 +146,7 @@ export default function InicioScreen() {
                 Gastos
               </Text>
               <Text variant="headlineSmall" style={{ color: theme.colors.error, fontWeight: '700' }}>
-                -{totals.expense.toFixed(2)} €
+                {formatEUR(-totals.expense)}
               </Text>
             </View>
             <View style={styles.summaryBox}>
@@ -144,7 +154,7 @@ export default function InicioScreen() {
                 Balance
               </Text>
               <Text variant="headlineSmall" style={{ fontWeight: '700' }}>
-                {(totals.income - totals.expense).toFixed(2)} €
+                {formatEUR(totals.income - totals.expense)}
               </Text>
             </View>
           </View>
@@ -180,7 +190,7 @@ export default function InicioScreen() {
                       <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                         {prop.regime === 'vacacional'
                           ? 'Alquiler vacacional'
-                          : `${prop.monthly_rent.toFixed(0)} €/mes · Día ${prop.payment_day}`}
+                          : `${formatEUR(prop.monthly_rent, { decimals: 0 })}/mes · Día ${prop.payment_day}`}
                       </Text>
                     </View>
 
@@ -196,8 +206,10 @@ export default function InicioScreen() {
                         mode="contained-tonal"
                         compact
                         icon="cash-check"
+                        loading={payingPropertyId === prop.id}
+                        disabled={payingPropertyId === prop.id}
                         onPress={() => handleQuickMarkPaid(prop)}>
-                        Cobrar {prop.monthly_rent.toFixed(0)}€
+                        Cobrar {formatEUR(prop.monthly_rent, { decimals: 0 })}
                       </Button>
                     ) : (
                       <Chip icon="clock-outline" mode="outlined">
@@ -297,8 +309,7 @@ export default function InicioScreen() {
                       fontWeight: '700',
                       color: tx.type === 'ingreso' ? theme.colors.primary : theme.colors.error,
                     }}>
-                    {tx.type === 'ingreso' ? '+' : '-'}
-                    {tx.amount.toFixed(2)} €
+                    {formatEUR(tx.type === 'ingreso' ? tx.amount : -tx.amount, { showSign: true })}
                   </Text>
                 )}
               />

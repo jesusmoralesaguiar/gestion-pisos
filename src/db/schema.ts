@@ -2,6 +2,8 @@ import { sql } from 'drizzle-orm';
 import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export type PropertyRegime = 'residencial' | 'vacacional';
+export type TaxRegion = 'canarias' | 'peninsula';
+export type IgicRegime = 'repep' | 'general_420';
 export type TransactionType = 'ingreso' | 'gasto';
 export type TransactionStatus = 'completado' | 'pendiente';
 export type IncidentStatus = 'abierta' | 'en_curso' | 'resuelta';
@@ -13,6 +15,10 @@ export const INCOME_CATEGORIES = [
   'Fianza recibida',
   'Otros ingresos',
 ] as const;
+
+export const RENT_INCOME_CATEGORIES = ['Alquiler mensual', 'Alquiler vacacional'] as const;
+
+export const NON_TAXABLE_INCOME_CATEGORIES = ['Fianza recibida'] as const;
 
 export const EXPENSE_CATEGORIES = [
   'IBI y Tasas',
@@ -32,6 +38,8 @@ export const properties = sqliteTable('properties', {
   address: text('address').notNull().default(''),
   cadastral_ref: text('cadastral_ref').notNull().default(''),
   regime: text('regime').$type<PropertyRegime>().notNull().default('residencial'),
+  tax_region: text('tax_region').$type<TaxRegion>().notNull().default('canarias'),
+  igic_regime: text('igic_regime').$type<IgicRegime>().notNull().default('repep'),
   monthly_rent: real('monthly_rent').notNull().default(0),
   payment_day: integer('payment_day').notNull().default(5),
   tenant_name: text('tenant_name').notNull().default(''),
@@ -104,6 +112,8 @@ export interface PropertyFiscalSummary {
   property_name: string;
   cadastral_ref: string;
   regime: PropertyRegime;
+  tax_region: TaxRegion;
+  igic_regime: IgicRegime;
   total_income: number;
   total_expense: number;
   net_yield: number;

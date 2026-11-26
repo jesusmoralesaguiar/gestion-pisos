@@ -39,3 +39,8 @@ Docs: https://docs.expo.dev/eas/index.md
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
 - Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
 - Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
+
+## Verificación con Strata (Segundo Agente)
+
+- **Hook automático (`Stop`):** `.agents/hooks.json` ejecuta `.agents/scripts/strata_stop_hook.py` al finalizar un turno con cambios en `src/`, `drizzle/` o archivos de configuración. Envía el diff al Gateway local de Strata (`http://127.0.0.1:18500`) y solo fuerza continuación (`decision: "continue"`) si detecta hallazgos `BLOCKER` (es fail-open si Strata está apagado). Se puede desactivar temporalmente con `STRATA_VERIFIER_DISABLE=1`.
+- **Revisión manual bajo demanda:** Usa `/strata-verifier` (`.agents/skills/strata-verifier/SKILL.md`) para lanzar una auditoría profunda vía MCP `strata_chat` sobre cambios de esquema Drizzle, reglas fiscales (IRPF/IGIC/IVA) o copias de seguridad `.zip`.

@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS `properties` (
 	`address` text DEFAULT '' NOT NULL,
 	`cadastral_ref` text DEFAULT '' NOT NULL,
 	`regime` text DEFAULT 'residencial' NOT NULL,
+	`tax_region` text DEFAULT 'canarias' NOT NULL,
+	`igic_regime` text DEFAULT 'repep' NOT NULL,
 	`monthly_rent` real DEFAULT 0 NOT NULL,
 	`payment_day` integer DEFAULT 5 NOT NULL,
 	`tenant_name` text DEFAULT '' NOT NULL,
