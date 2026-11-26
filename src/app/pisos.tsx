@@ -43,6 +43,7 @@ export default function PisosScreen() {
   const [regime, setRegime] = useState<PropertyRegime>('residencial');
   const [taxRegion, setTaxRegion] = useState<TaxRegion>('canarias');
   const [igicRegime, setIgicRegime] = useState<IgicRegime>('repep');
+  const [ownerName, setOwnerName] = useState('');
   const [monthlyRent, setMonthlyRent] = useState('');
   const [paymentDay, setPaymentDay] = useState('5');
   const [tenantName, setTenantName] = useState('');
@@ -103,7 +104,8 @@ export default function PisosScreen() {
       cadastral_ref: cadastralRef,
       regime,
       tax_region: taxRegion,
-      igic_regime: taxRegion === 'canarias' && regime === 'vacacional' ? igicRegime : 'repep',
+      igic_regime: taxRegion === 'canarias' && regime !== 'residencial' ? igicRegime : 'repep',
+      owner_name: ownerName,
       monthly_rent: rent,
       payment_day: day,
       tenant_name: tenantName,
@@ -114,6 +116,7 @@ export default function PisosScreen() {
     setCadastralRef('');
     setTaxRegion('canarias');
     setIgicRegime('repep');
+    setOwnerName('');
     setMonthlyRent('');
     setTenantName('');
     setShowAddProperty(false);
@@ -200,12 +203,28 @@ export default function PisosScreen() {
                 />
                 <Card.Content style={{ gap: 8 }}>
                   <View style={styles.chipsRow}>
-                    <Chip compact icon={prop.regime === 'vacacional' ? 'beach' : 'home-account'}>
-                      {prop.regime === 'vacacional' ? 'Vacacional' : 'Residencial'}
+                    <Chip
+                      compact
+                      icon={
+                        prop.regime === 'vacacional'
+                          ? 'beach'
+                          : prop.regime === 'local'
+                            ? 'store'
+                            : prop.regime === 'garaje'
+                              ? 'garage'
+                              : 'home-account'
+                      }>
+                      {prop.regime === 'vacacional'
+                        ? 'Vacacional'
+                        : prop.regime === 'local'
+                          ? 'Local'
+                          : prop.regime === 'garaje'
+                            ? 'Garaje'
+                            : 'Residencial'}
                     </Chip>
                     <Chip compact icon="map-marker-outline">
                       {prop.tax_region === 'canarias'
-                        ? prop.regime === 'vacacional'
+                        ? prop.regime !== 'residencial'
                           ? prop.igic_regime === 'general_420'
                             ? 'Canarias · Mod. 420'
                             : 'Canarias · REPEP'
@@ -223,6 +242,12 @@ export default function PisosScreen() {
                       </Chip>
                     ) : null}
                   </View>
+
+                  {prop.owner_name ? (
+                    <Text variant="bodyMedium" style={{ fontWeight: '600' }}>
+                      Titular: {prop.owner_name}
+                    </Text>
+                  ) : null}
 
                   {prop.tenant_name ? (
                     <Text variant="bodyMedium">Inquilino: {prop.tenant_name}</Text>
@@ -296,14 +321,30 @@ export default function PisosScreen() {
                 onChangeText={setName}
                 mode="outlined"
               />
-              <SegmentedButtons
-                value={regime}
-                onValueChange={(v) => setRegime(v as PropertyRegime)}
-                buttons={[
-                  { value: 'residencial', label: 'Residencial' },
-                  { value: 'vacacional', label: 'Vacacional' },
-                ]}
-              />
+              <View style={styles.chipsRow}>
+                {(
+                  [
+                    { value: 'residencial', label: 'Residencial', icon: 'home-account' },
+                    { value: 'vacacional', label: 'Vacacional', icon: 'beach' },
+                    { value: 'local', label: 'Local', icon: 'store' },
+                    { value: 'garaje', label: 'Garaje', icon: 'garage' },
+                  ] as const
+                ).map((opt) => (
+                  <Chip
+                    key={opt.value}
+                    selected={regime === opt.value}
+                    showSelectedOverlay
+                    icon={opt.icon}
+                    onPress={() => {
+                      setRegime(opt.value);
+                      if (opt.value === 'local' && taxRegion === 'canarias') {
+                        setIgicRegime('general_420');
+                      }
+                    }}>
+                    {opt.label}
+                  </Chip>
+                ))}
+              </View>
               <SegmentedButtons
                 value={taxRegion}
                 onValueChange={(v) => setTaxRegion(v as TaxRegion)}
@@ -312,7 +353,7 @@ export default function PisosScreen() {
                   { value: 'peninsula', label: 'Península (IVA)' },
                 ]}
               />
-              {taxRegion === 'canarias' && regime === 'vacacional' && (
+              {taxRegion === 'canarias' && regime !== 'residencial' && (
                 <SegmentedButtons
                   value={igicRegime}
                   onValueChange={(v) => setIgicRegime(v as IgicRegime)}
@@ -322,6 +363,18 @@ export default function PisosScreen() {
                   ]}
                 />
               )}
+              <View
+                onLayout={(e) => {
+                  dialogOffsetsRef.current.ownerName = e.nativeEvent.layout.y;
+                }}>
+                <TextInput
+                  label="Titular / Propietario (ej. Nieves, Antonio)"
+                  value={ownerName}
+                  onChangeText={setOwnerName}
+                  onFocus={() => scrollDialogToField('ownerName')}
+                  mode="outlined"
+                />
+              </View>
               <View
                 onLayout={(e) => {
                   dialogOffsetsRef.current.address = e.nativeEvent.layout.y;
@@ -360,7 +413,7 @@ export default function PisosScreen() {
                   mode="outlined"
                 />
               </View>
-              {regime === 'residencial' && (
+              {regime !== 'vacacional' && (
                 <>
                   <View
                     onLayout={(e) => {

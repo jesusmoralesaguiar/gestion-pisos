@@ -21,10 +21,17 @@ import {
 import { formatEUR } from '@/utils/format';
 
 function formatPropertyFiscalSubtitle(s: PropertyFiscalSummary): string {
-  const regimeLabel = s.regime === 'vacacional' ? 'Vacacional' : 'Residencial';
+  const regimeLabel =
+    s.regime === 'vacacional'
+      ? 'Vacacional'
+      : s.regime === 'local'
+        ? 'Local comercial'
+        : s.regime === 'garaje'
+          ? 'Garaje'
+          : 'Residencial';
   let taxLabel: string;
   if (s.tax_region === 'canarias') {
-    if (s.regime === 'vacacional') {
+    if (s.regime !== 'residencial') {
       taxLabel =
         s.igic_regime === 'general_420'
           ? 'Canarias IGIC Mod. 420 (Base IRPF)'
@@ -37,8 +44,9 @@ function formatPropertyFiscalSubtitle(s: PropertyFiscalSummary): string {
   } else {
     taxLabel = 'Régimen fiscal general (Total IRPF)';
   }
+  const ownerSuffix = s.owner_name ? ` · Titular: ${s.owner_name}` : '';
   const refSuffix = s.cadastral_ref ? ` · Ref: ${s.cadastral_ref}` : '';
-  return `${regimeLabel} · ${taxLabel}${refSuffix}`;
+  return `${regimeLabel} · ${taxLabel}${ownerSuffix}${refSuffix}`;
 }
 
 export default function FiscalScreen() {
@@ -99,7 +107,7 @@ export default function FiscalScreen() {
               await loadData();
               Alert.alert(
                 'Copia restaurada',
-                `Base de datos cargada correctamente (${res.importedAttachments} facturas/adjuntos importados).`
+                `Base de datos cargada: ${res.importedProperties} inmuebles y ${res.importedAttachments} facturas/adjuntos importados.`
               );
             } catch (err) {
               const msg = (err as Error).message;
@@ -187,8 +195,8 @@ export default function FiscalScreen() {
           </View>
 
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            Nota fiscal: las fianzas recibidas no computan como ingreso IRPF. En Canarias vacacional
-            (Mod. 420) el IRPF se calcula sobre base imponible; en residencial o REPEP sobre el total.
+            Nota fiscal: las fianzas recibidas no computan como ingreso IRPF. En Canarias (Mod. 420)
+            el IRPF se calcula sobre base imponible; en residencial o REPEP sobre el total.
           </Text>
 
           <Button

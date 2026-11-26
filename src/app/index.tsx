@@ -97,10 +97,18 @@ export default function InicioScreen() {
     setPayingPropertyId(property.id);
     try {
       const today = getLocalISODate();
+      const categoryByRegime =
+        property.regime === 'vacacional'
+          ? 'Alquiler vacacional'
+          : property.regime === 'local'
+            ? 'Alquiler local'
+            : property.regime === 'garaje'
+              ? 'Alquiler garaje'
+              : 'Alquiler mensual';
       await createTransaction({
         property_id: property.id,
         type: 'ingreso',
-        category: property.regime === 'vacacional' ? 'Alquiler vacacional' : 'Alquiler mensual',
+        category: categoryByRegime,
         amount: property.monthly_rent,
         base_amount: property.monthly_rent,
         vat_amount: 0,
@@ -190,7 +198,13 @@ export default function InicioScreen() {
                       <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                         {prop.regime === 'vacacional'
                           ? 'Alquiler vacacional'
-                          : `${formatEUR(prop.monthly_rent, { decimals: 0 })}/mes · Día ${prop.payment_day}`}
+                          : prop.monthly_rent > 0
+                            ? `${formatEUR(prop.monthly_rent, { decimals: 0 })}/mes · Día ${prop.payment_day}`
+                            : prop.regime === 'local'
+                              ? 'Local comercial'
+                              : prop.regime === 'garaje'
+                                ? 'Plaza de garaje'
+                                : 'Alquiler residencial'}
                       </Text>
                     </View>
 

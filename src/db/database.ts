@@ -33,11 +33,6 @@ export type AppDatabase = ExpoSQLiteDatabase<typeof schema>;
 let expoDb: SQLite.SQLiteDatabase | null = null;
 let drizzleDb: AppDatabase | null = null;
 let initPromise: Promise<AppDatabase> | null = null;
-let lastDatabasePath: string | null = null;
-
-export function getDatabaseFilePath(): string | null {
-  return lastDatabasePath;
-}
 
 /**
  * Returns the initialized Drizzle ORM database instance, running any pending
@@ -53,7 +48,6 @@ export async function getDatabase(): Promise<AppDatabase> {
 
   initPromise = (async () => {
     const db = SQLite.openDatabaseSync(DB_NAME, { enableChangeListener: true });
-    lastDatabasePath = db.databasePath;
     try {
       db.execSync('PRAGMA foreign_keys = ON;');
       const orm = drizzle(db, { schema });
@@ -72,7 +66,19 @@ export async function getDatabase(): Promise<AppDatabase> {
 }
 
 /**
- * Closes the active SQLite connection so backup imports can safely replace the DB file.
+ * Serializes the active SQLite database to a consistent binary snapshot for backups.
+ */
+export async function serializeDatabase(): Promise<Uint8Array> {
+  await getDatabase();
+  if (!expoDb) {
+    throw new Error('No se pudo acceder a la base de datos activa.');
+  }
+  await expoDb.execAsync('PRAGMA wal_checkpoint(TRUNCATE);').catch(() => {});
+  return expoDb.serializeAsync();
+}
+
+/**
+ * Closes the active SQLite connection so backup imports or resets can safely replace it.
  */
 export async function closeDatabase(): Promise<void> {
   if (initPromise) {
@@ -84,7 +90,6 @@ export async function closeDatabase(): Promise<void> {
   expoDb = null;
   drizzleDb = null;
   initPromise = null;
-  lastDatabasePath = null;
 }
 
 // --- Properties ---
@@ -101,6 +106,7 @@ export async function createProperty(input: {
   regime: PropertyRegime;
   tax_region?: TaxRegion;
   igic_regime?: IgicRegime;
+  owner_name?: string;
   monthly_rent: number;
   payment_day?: number;
   tenant_name?: string;
@@ -116,6 +122,7 @@ export async function createProperty(input: {
       regime: input.regime,
       tax_region: input.tax_region ?? 'canarias',
       igic_regime: input.igic_regime ?? 'repep',
+      owner_name: input.owner_name?.trim() ?? '',
       monthly_rent: input.monthly_rent,
       payment_day: input.payment_day ?? 5,
       tenant_name: input.tenant_name?.trim() ?? '',
@@ -388,13 +395,14 @@ export async function toggleReminderCompleted(id: number, completed: boolean): P
 export async function getFiscalSummaryByYear(year: number): Promise<PropertyFiscalSummary[]> {
   const db = await getDatabase();
   const prefix = `${year}-%`;
-  const irpfAmount = sql`CASE WHEN ${properties.tax_region} = 'canarias' AND ${properties.regime} = 'vacacional' AND ${properties.igic_regime} = 'general_420' THEN ${transactions.base_amount} ELSE ${transactions.amount} END`;
+  const irpfAmount = sql`CASE WHEN ${properties.tax_region} = 'canarias' AND ${properties.regime} != 'residencial' AND ${properties.igic_regime} = 'general_420' THEN ${transactions.base_amount} ELSE ${transactions.amount} END`;
 
   const rows = await db
     .select({
       property_id: properties.id,
       property_name: properties.name,
       cadastral_ref: properties.cadastral_ref,
+      owner_name: properties.owner_name,
       regime: properties.regime,
       tax_region: properties.tax_region,
       igic_regime: properties.igic_regime,
@@ -413,6 +421,7 @@ export async function getFiscalSummaryByYear(year: number): Promise<PropertyFisc
       property_id: row.property_id,
       property_name: row.property_name,
       cadastral_ref: row.cadastral_ref,
+      owner_name: row.owner_name,
       regime: row.regime,
       tax_region: row.tax_region,
       igic_regime: row.igic_regime,

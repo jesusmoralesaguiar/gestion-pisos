@@ -67,10 +67,30 @@ export default function RegistrarScreen() {
     }, [selectedPropertyId])
   );
 
+  const getIncomeCategoryForProperty = (prop?: Property) => {
+    if (!prop) return INCOME_CATEGORIES[0];
+    if (prop.regime === 'vacacional') return 'Alquiler vacacional';
+    if (prop.regime === 'local') return 'Alquiler local';
+    if (prop.regime === 'garaje') return 'Alquiler garaje';
+    return 'Alquiler mensual';
+  };
+
+  const handleSelectProperty = (prop: Property) => {
+    setSelectedPropertyId(prop.id);
+    if (type === 'ingreso') {
+      setCategory(getIncomeCategoryForProperty(prop));
+    }
+  };
+
   const handleTypeChange = (newType: string) => {
     const typed = newType as TransactionType;
     setType(typed);
-    setCategory(typed === 'ingreso' ? INCOME_CATEGORIES[0] : EXPENSE_CATEGORIES[0]);
+    if (typed === 'ingreso') {
+      const prop = properties.find((p) => p.id === selectedPropertyId);
+      setCategory(getIncomeCategoryForProperty(prop));
+    } else {
+      setCategory(EXPENSE_CATEGORIES[0]);
+    }
   };
 
   const handleTakePhoto = async () => {
@@ -230,7 +250,7 @@ export default function RegistrarScreen() {
                   key={p.id}
                   selected={selectedPropertyId === p.id}
                   showSelectedOverlay
-                  onPress={() => setSelectedPropertyId(p.id)}>
+                  onPress={() => handleSelectProperty(p)}>
                   {p.name}
                 </Chip>
               ))}

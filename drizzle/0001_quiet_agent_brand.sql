@@ -1,0 +1,1 @@
+ALTER TABLE `properties` ADD `owner_name` text DEFAULT '' NOT NULL;

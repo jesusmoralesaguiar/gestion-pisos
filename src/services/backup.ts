@@ -9,31 +9,24 @@ import * as XLSX from 'xlsx';
 import {
   closeDatabase,
   DB_NAME,
+  getAllProperties,
   getDatabase,
-  getDatabaseFilePath,
   getFiscalSummaryByYear,
   getTransactionsByYear,
+  serializeDatabase,
 } from '@/db/database';
-import { NON_TAXABLE_INCOME_CATEGORIES } from '@/db/schema';
+import {
+  NON_TAXABLE_INCOME_CATEGORIES,
+  type IgicRegime,
+  type PropertyRegime,
+  type TaxRegion,
+} from '@/db/schema';
 import { getLocalISODate } from '@/utils/dates';
 
 const SQLITE_MAGIC_HEADER = 'SQLite format 3\0';
 
 function getAttachmentsDir(): Directory {
   return new Directory(Paths.document, 'attachments');
-}
-
-function getSqliteDir(): Directory {
-  return new Directory(Paths.document, 'SQLite');
-}
-
-function getSqliteFile(): File {
-  const nativePath = getDatabaseFilePath();
-  if (nativePath && (nativePath.startsWith('file://') || nativePath.startsWith('/'))) {
-    const uri = nativePath.startsWith('file://') ? nativePath : `file://${nativePath}`;
-    return new File(uri);
-  }
-  return new File(getSqliteDir(), DB_NAME);
 }
 
 function isValidSqliteHeader(bytes: Uint8Array): boolean {
@@ -46,6 +39,39 @@ function isValidSqliteHeader(bytes: Uint8Array): boolean {
     }
   }
   return true;
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Reads file bytes with fallbacks for Android DocumentPicker content/cache URIs.
+ */
+async function readFileBytes(fileOrUri: File | string): Promise<Uint8Array> {
+  const uri = typeof fileOrUri === 'string' ? fileOrUri : fileOrUri.uri;
+  const file = typeof fileOrUri === 'string' ? new File(fileOrUri) : fileOrUri;
+
+  try {
+    return await file.bytes();
+  } catch {
+    try {
+      const base64 = await file.base64();
+      return base64ToUint8Array(base64);
+    } catch {
+      const response = await fetch(uri);
+      if (!response.ok) {
+        throw new Error(`No se pudo leer el archivo seleccionado (${response.status}).`);
+      }
+      const buffer = await response.arrayBuffer();
+      return new Uint8Array(buffer);
+    }
+  }
 }
 
 export function ensureAttachmentsDir(): Directory {
@@ -141,38 +167,26 @@ export function resolveAttachmentUri(fileNameOrUri: string | null): string | nul
 }
 
 export async function exportBackupZip(): Promise<void> {
-  await getDatabase();
-  const dbFile = getSqliteFile();
-  await closeDatabase();
+  const dbBytes = await serializeDatabase();
 
-  let zipBytes: Uint8Array;
-  try {
-    if (!dbFile.exists) {
-      throw new Error('No se encontró la base de datos local.');
-    }
+  const zip = new JSZip();
+  zip.file(DB_NAME, dbBytes);
 
-    const zip = new JSZip();
-    const dbBytes = await dbFile.bytes();
-    zip.file(DB_NAME, dbBytes);
-
-    const attachmentsDir = getAttachmentsDir();
-    if (attachmentsDir.exists) {
-      const entries = attachmentsDir.list();
-      const attachmentsFolder = zip.folder('attachments');
-      if (attachmentsFolder) {
-        for (const entry of entries) {
-          if (entry instanceof File && entry.exists) {
-            const bytes = await entry.bytes();
-            attachmentsFolder.file(entry.name, bytes);
-          }
+  const attachmentsDir = getAttachmentsDir();
+  if (attachmentsDir.exists) {
+    const entries = attachmentsDir.list();
+    const attachmentsFolder = zip.folder('attachments');
+    if (attachmentsFolder) {
+      for (const entry of entries) {
+        if (entry instanceof File && entry.exists) {
+          const bytes = await readFileBytes(entry);
+          attachmentsFolder.file(entry.name, bytes);
         }
       }
     }
-
-    zipBytes = await zip.generateAsync({ type: 'uint8array' });
-  } finally {
-    await getDatabase().catch(() => {});
   }
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
 
   const dateTag = getLocalISODate();
   const outFile = new File(Paths.cache, `copia_pisos_${dateTag}.zip`);
@@ -188,7 +202,10 @@ export async function exportBackupZip(): Promise<void> {
   });
 }
 
-export async function importBackupZip(): Promise<{ importedAttachments: number }> {
+export async function importBackupZip(): Promise<{
+  importedAttachments: number;
+  importedProperties: number;
+}> {
   const result = await DocumentPicker.getDocumentAsync({
     type: ['application/zip', 'application/x-zip-compressed', '*/*'],
     copyToCacheDirectory: true,
@@ -198,8 +215,7 @@ export async function importBackupZip(): Promise<{ importedAttachments: number }
     throw new Error('CANCELLED');
   }
 
-  const pickedFile = new File(result.assets[0].uri);
-  const zipBytes = await pickedFile.bytes();
+  const zipBytes = await readFileBytes(result.assets[0].uri);
   const zip = await JSZip.loadAsync(zipBytes);
 
   const dbEntry = zip.file(DB_NAME);
@@ -212,7 +228,19 @@ export async function importBackupZip(): Promise<{ importedAttachments: number }
     throw new Error('La base de datos dentro del archivo ZIP está dañada o no es válida.');
   }
 
-  // Validate SQLite page integrity and expected schema before touching the live database.
+  // Extract attachments into memory before touching the live database.
+  const attachmentEntries = Object.keys(zip.files).filter(
+    (name) => name.startsWith('attachments/') && !zip.files[name].dir
+  );
+  const stagedAttachments: { fileName: string; data: Uint8Array }[] = [];
+  for (const fullPath of attachmentEntries) {
+    const fileName = fullPath.replace('attachments/', '');
+    if (!fileName || fileName.includes('/')) continue;
+    const data = await zip.files[fullPath].async('uint8array');
+    stagedAttachments.push({ fileName, data });
+  }
+
+  // Validate SQLite page integrity and expected schema, then copy directly via SQLite backup API.
   const probeDb = await SQLite.deserializeDatabaseAsync(dbContent);
   try {
     const integrity = await probeDb.getFirstAsync<{ integrity_check: string }>(
@@ -227,65 +255,42 @@ export async function importBackupZip(): Promise<{ importedAttachments: number }
     if (tables.length < 2) {
       throw new Error('La base de datos del ZIP no pertenece a Gestión Pisos.');
     }
+
+    await closeDatabase();
+
+    const destDb = await SQLite.openDatabaseAsync(DB_NAME, { useNewConnection: true });
+    try {
+      await SQLite.backupDatabaseAsync({
+        sourceDatabase: probeDb,
+        destDatabase: destDb,
+      });
+      await destDb.execAsync('PRAGMA wal_checkpoint(TRUNCATE);').catch(() => {});
+    } catch (err) {
+      await destDb.closeAsync().catch(() => {});
+      await getDatabase().catch(() => {});
+      throw err;
+    }
+    await destDb.closeAsync().catch(() => {});
   } finally {
     await probeDb.closeAsync().catch(() => {});
   }
 
-  // Extract attachments into memory before closing or modifying the live database.
-  const attachmentEntries = Object.keys(zip.files).filter(
-    (name) => name.startsWith('attachments/') && !zip.files[name].dir
-  );
-  const stagedAttachments: { fileName: string; data: Uint8Array }[] = [];
-  for (const fullPath of attachmentEntries) {
-    const fileName = fullPath.replace('attachments/', '');
-    if (!fileName || fileName.includes('/')) continue;
-    const data = await zip.files[fullPath].async('uint8array');
-    stagedAttachments.push({ fileName, data });
+  const attachmentsDir = ensureAttachmentsDir();
+  for (const item of stagedAttachments) {
+    const outFile = new File(attachmentsDir, item.fileName);
+    outFile.write(item.data);
   }
 
-  const targetDb = getSqliteFile();
-  await closeDatabase();
-
-  const sqliteDir = targetDb.parentDirectory;
-  if (!sqliteDir.exists) {
-    sqliteDir.create({ intermediates: true, idempotent: true });
-  }
-
-  const previousDbBytes = targetDb.exists ? await targetDb.bytes() : null;
-
-  try {
-    for (const suffix of ['-wal', '-shm']) {
-      const journalFile = new File(targetDb.parentDirectory, `${targetDb.name}${suffix}`);
-      if (journalFile.exists) {
-        journalFile.delete();
-      }
-    }
-
-    targetDb.write(dbContent);
-
-    const attachmentsDir = ensureAttachmentsDir();
-    for (const item of stagedAttachments) {
-      const outFile = new File(attachmentsDir, item.fileName);
-      outFile.write(item.data);
-    }
-
-    await getDatabase();
-    return { importedAttachments: stagedAttachments.length };
-  } catch (err) {
-    if (previousDbBytes) {
-      try {
-        targetDb.write(previousDbBytes);
-        await getDatabase().catch(() => {});
-      } catch {
-        // Best-effort rollback if restoring the previous DB fails.
-      }
-    }
-    throw err;
-  }
+  await getDatabase();
+  const importedProperties = (await getAllProperties()).length;
+  return {
+    importedAttachments: stagedAttachments.length,
+    importedProperties,
+  };
 }
 
 /**
- * Deletes the local SQLite database (plus WAL/SHM journals) and all stored attachments,
+ * Deletes the local SQLite database and all stored attachments,
  * then recreates an empty database with all Drizzle migrations applied.
  */
 export async function resetLocalDatabase(): Promise<void> {
@@ -294,17 +299,7 @@ export async function resetLocalDatabase(): Promise<void> {
   try {
     await SQLite.deleteDatabaseAsync(DB_NAME);
   } catch {
-    // Ignore if database did not exist in Expo SQLite default directory.
-  }
-
-  const sqliteDir = getSqliteDir();
-  if (sqliteDir.exists) {
-    for (const suffix of ['', '-wal', '-shm']) {
-      const file = new File(sqliteDir, `${DB_NAME}${suffix}`);
-      if (file.exists) {
-        file.delete();
-      }
-    }
+    // Ignore if database did not exist yet.
   }
 
   const attachmentsDir = getAttachmentsDir();
@@ -319,10 +314,23 @@ export async function resetLocalDatabase(): Promise<void> {
   await getDatabase();
 }
 
+function getRegimeLabel(regime: PropertyRegime): string {
+  switch (regime) {
+    case 'vacacional':
+      return 'Vacacional';
+    case 'local':
+      return 'Local comercial';
+    case 'garaje':
+      return 'Garaje';
+    default:
+      return 'Residencial';
+  }
+}
+
 function getIndirectTaxLabel(
-  taxRegion: 'canarias' | 'peninsula',
-  regime: 'residencial' | 'vacacional',
-  igicRegime: 'repep' | 'general_420'
+  taxRegion: TaxRegion,
+  regime: PropertyRegime,
+  igicRegime: IgicRegime
 ): string {
   if (regime === 'residencial') {
     return taxRegion === 'canarias' ? 'Exento IGIC (Residencial)' : 'Exento IVA (Residencial)';
@@ -340,9 +348,10 @@ export async function exportFiscalExcel(year: number): Promise<void> {
 
   const summaryRows = summaries.map((s) => ({
     Piso: s.property_name,
+    Titular: s.owner_name || '-',
     'Referencia Catastral': s.cadastral_ref || '-',
     Territorio: s.tax_region === 'canarias' ? 'Canarias (IGIC)' : 'Península/Baleares (IVA)',
-    Régimen: s.regime === 'vacacional' ? 'Vacacional' : 'Residencial',
+    Régimen: getRegimeLabel(s.regime),
     'Régimen Imp. Indirecto': getIndirectTaxLabel(s.tax_region, s.regime, s.igic_regime),
     'Ingresos Computables (€)': Number(s.total_income.toFixed(2)),
     'Gastos Deducibles (€)': Number(s.total_expense.toFixed(2)),
